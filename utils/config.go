@@ -1,4 +1,4 @@
-package config
+package utils
 
 import (
 	"bufio"
@@ -26,7 +26,12 @@ func LoadConfig() (*Config, error) {
 	// 检查配置文件是否存在
 	if _, err := os.Stat("config.ini"); os.IsNotExist(err) {
 		// 配置文件不存在，生成默认配置文件
-		return config, GenerateDefaultConfig(config)
+		err := GenerateDefaultConfig(config)
+		if err != nil {
+			return config, err
+		}
+		// 生成默认配置文件后返回错误，提示用户修改配置
+		return config, fmt.Errorf("配置文件不存在，已生成默认配置文件 config.ini，请根据需要修改配置后重新启动程序")
 	}
 
 	file, err := os.Open("config.ini")
@@ -87,12 +92,12 @@ host = 127.0.0.1:9090
 secret = 
 interval = 1000
 `
-	
+
 	err := os.WriteFile("config.ini", []byte(content), 0644)
 	if err != nil {
 		return fmt.Errorf("生成默认配置文件失败: %v", err)
 	}
-	
-	fmt.Println("已生成默认配置文件 config.ini，请根据需要修改配置后重新启动程序")
+
+	GetLogger().Println("已生成默认配置文件 config.ini，请根据需要修改配置后重新启动程序")
 	return nil
 }

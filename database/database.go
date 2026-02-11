@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"clash-statistics/utils"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -18,57 +20,57 @@ type Database struct {
 
 // Connection 表示单个连接
 type Connection struct {
-	ID                  string
-	Chain               []string
-	Rule                string
-	RulePayload         string
-	Download            int64
-	Upload              int64
-	SourceIP            string
-	SourcePort          string
-	DestPort            string
-	DestIP              string
-	StartTime           string
-	ClosedTime          string
+	ID          string
+	Chain       []string
+	Rule        string
+	RulePayload string
+	Download    int64
+	Upload      int64
+	SourceIP    string
+	SourcePort  string
+	DestPort    string
+	DestIP      string
+	StartTime   string
+	ClosedTime  string
 	// 从 Metadata 展开的字段（用于数据库存储）
-	Network             string
-	ConnectionType      string
-	SourceIPAddr        string
-	DestinationIP       string
-	SourcePortNum       string
-	DestinationPort     string
-	Host                string
-	DNSMode             string
-	Uid                 int
-	Process             string
-	ProcessPath         string
-	SpecialProxy        string
-	SpecialRules        string
-	RemoteDestination   string
-	DSCP                int
-	SniffHost           string
-	InboundIP           string
-	InboundPort         string
-	InboundName         string
-	InboundUser         string
-	SourceGeoIP         interface{}
-	DestinationGeoIP    interface{}
-	SourceIPASN         string
-	DestinationIPASN    string
+	Network           string
+	ConnectionType    string
+	SourceIPAddr      string
+	DestinationIP     string
+	SourcePortNum     string
+	DestinationPort   string
+	Host              string
+	DNSMode           string
+	Uid               int
+	Process           string
+	ProcessPath       string
+	SpecialProxy      string
+	SpecialRules      string
+	RemoteDestination string
+	DSCP              int
+	SniffHost         string
+	InboundIP         string
+	InboundPort       string
+	InboundName       string
+	InboundUser       string
+	SourceGeoIP       interface{}
+	DestinationGeoIP  interface{}
+	SourceIPASN       string
+	DestinationIPASN  string
 }
 
 // StatsEntry 表示统计条目
 type StatsEntry struct {
-	Target      string // host 或 destinationIP
-	Download    int64
-	Upload      int64
-	Total       int64
+	Target   string // host 或 destinationIP
+	Download int64
+	Upload   int64
+	Total    int64
 }
 
 // GanttEntry 表示甘特图条目
 type GanttEntry struct {
-	SourceIP    string
-	TimeSlots   [144]bool     // 每天144个10分钟时间段，true表示该时间段有活动
+	SourceIP  string
+	TimeSlots [144]bool // 每天144个10分钟时间段，true表示该时间段有活动
 }
 
 // InitDB 初始化数据库
@@ -274,7 +276,7 @@ func (d *Database) GetStats() ([]StatsEntry, error) {
 		stats = append(stats, entry)
 		count++
 	}
-	
+
 	return stats, nil
 }
 
@@ -332,15 +334,15 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 
 	// 按sourceIP组织数据
 	ganttData := make(map[string][144]bool)
-	
+
 	for rows.Next() {
 		var sourceIP, startTime, closedTime string
-		
+
 		err := rows.Scan(&sourceIP, &startTime, &closedTime)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		// 解析开始和结束时间
 		startTimeParsed, err := time.Parse("2006-01-02T15:04:05Z", startTime)
 		if err != nil {
@@ -350,7 +352,7 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 				continue // 跳过无法解析的时间
 			}
 		}
-		
+
 		var endTimeParsed time.Time
 		if closedTime != "" {
 			endTimeParsed, err = time.Parse("2006-01-02 15:04:05", closedTime)
@@ -361,24 +363,24 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 			// 如果没有关闭时间，使用当前时间
 			endTimeParsed = time.Now()
 		}
-		
+
 		// 获取或创建时间槽
 		timeSlots := ganttData[sourceIP]
-		
+
 		// 计算从开始时间到结束时间之间的所有10分钟时间段
 		slotStart := time.Date(startTimeParsed.Year(), startTimeParsed.Month(), startTimeParsed.Day(), 0, 0, 0, 0, startTimeParsed.Location())
 		for i := 0; i < 144; i++ {
 			slotBegin := slotStart.Add(time.Duration(i*10) * time.Minute)
 			slotEnd := slotBegin.Add(10 * time.Minute)
-			
+
 			// 检查连接是否在这个时间段内活跃
 			// 只有当连接开始时间早于时间段结束时间 且 连接结束时间晚于时间段开始时间时，才认为在该时间段内活跃
-			if (startTimeParsed.Before(slotEnd) || startTimeParsed.Equal(slotEnd)) && 
-			   (endTimeParsed.After(slotBegin) || endTimeParsed.Equal(slotBegin)) {
+			if (startTimeParsed.Before(slotEnd) || startTimeParsed.Equal(slotEnd)) &&
+				(endTimeParsed.After(slotBegin) || endTimeParsed.Equal(slotBegin)) {
 				timeSlots[i] = true
 			}
 		}
-		
+
 		ganttData[sourceIP] = timeSlots
 	}
 
@@ -414,21 +416,21 @@ func naturalIPCompare(ip1, ip2 string) bool {
 	if ip2 == "未知IP" && ip1 != "未知IP" {
 		return false
 	}
-	
+
 	// 如果两个都不是IP地址，按字符串排序
 	if !isIPAddress(ip1) || !isIPAddress(ip2) {
 		return ip1 < ip2
 	}
-	
+
 	// 将IP地址分解为数字部分进行比较
 	parts1 := strings.Split(ip1, ".")
 	parts2 := strings.Split(ip2, ".")
-	
+
 	// 比较每一部分
 	for i := 0; i < len(parts1) && i < len(parts2); i++ {
 		num1, err1 := strconv.Atoi(parts1[i])
 		num2, err2 := strconv.Atoi(parts2[i])
-		
+
 		// 如果都能转换为数字，则按数值比较
 		if err1 == nil && err2 == nil {
 			if num1 != num2 {
@@ -441,7 +443,7 @@ func naturalIPCompare(ip1, ip2 string) bool {
 			}
 		}
 	}
-	
+
 	// 如果前面部分都相等，比较长度（较长的IP地址通常数值更大）
 	return len(parts1) < len(parts2)
 }
@@ -452,14 +454,14 @@ func isIPAddress(s string) bool {
 	if len(parts) != 4 {
 		return false
 	}
-	
+
 	for _, part := range parts {
 		num, err := strconv.Atoi(part)
 		if err != nil || num < 0 || num > 255 {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -470,7 +472,7 @@ func (d *Database) GetOpenConnectionIDs() ([]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var ids []string
 	for rows.Next() {
 		var id string
@@ -480,7 +482,7 @@ func (d *Database) GetOpenConnectionIDs() ([]string, error) {
 		}
 		ids = append(ids, id)
 	}
-	
+
 	return ids, nil
 }
 
@@ -491,7 +493,7 @@ func (d *Database) SetConnectionClosedTime(id, closedTime string) error {
 		return err
 	}
 	defer stmt.Close()
-	
+
 	_, err = stmt.Exec(closedTime, closedTime, id)
 	return err
 }
@@ -515,9 +517,9 @@ func (d *Database) UpdateClosedTime(id, closedTime string) error {
 	}
 
 	if rowsAffected == 0 {
-		fmt.Printf("警告: 没有找到ID为 %s 的记录\n", id)
+		utils.GetLogger().Printf("警告: 没有找到ID为 %s 的记录\n", id)
 	} else {
-		fmt.Printf("成功更新 %d 条记录的closed_time为 %s\n", rowsAffected, closedTime)
+		utils.GetLogger().Printf("成功更新 %d 条记录的closed_time为 %s\n", rowsAffected, closedTime)
 	}
 
 	return nil
@@ -527,4 +529,3 @@ func (d *Database) UpdateClosedTime(id, closedTime string) error {
 func (d *Database) Close() error {
 	return d.db.Close()
 }
-
