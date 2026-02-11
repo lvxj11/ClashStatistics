@@ -7,6 +7,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data  # 挂载数据目录，存储数据库和日志
+    user: "1000:1000"  # 使用与容器内相同的用户ID，避免权限问题
     env_file:
       - .env  # 从 .env 文件加载环境变量
     environment:
