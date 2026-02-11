@@ -1,0 +1,73 @@
+{{define "content"}}
+<div x-data="sourceIPStats()" x-init="loadSourceIPStats()">
+    <h2 class="text-2xl font-bold mb-6">流量统计 (按 SourceIP)</h2>
+    
+    <div x-show="loading" class="flex justify-center py-8">
+        <span class="loading loading-spinner loading-lg"></span>
+    </div>
+    
+    <div x-show="error" class="alert alert-error" x-cloak>
+        <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span x-text="error"></span>
+    </div>
+    
+    <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
+        <table class="table table-zebra w-full">
+            <thead>
+                <tr>
+                    <th>排名</th>
+                    <th>SourceIP</th>
+                    <th>下载量</th>
+                    <th>上传量</th>
+                    <th>总计</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="(item, index) in stats" :key="index">
+                    <tr class="hover">
+                        <td x-text="index + 1"></td>
+                        <td x-text="item.Target"></td>
+                        <td x-text="formatBytes(item.Download)"></td>
+                        <td x-text="formatBytes(item.Upload)"></td>
+                        <td x-text="formatBytes(item.Total)"></td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+    
+    <div x-show="!loading && !error && stats.length === 0" class="text-center py-8" x-cloak>
+        <div class="alert">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span>暂无数据</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    function sourceIPStats() {
+        return {
+            stats: [],
+            loading: true,
+            error: null,
+            loadSourceIPStats() {
+                fetch('/api/sourceip-stats')
+                    .then(response => response.json())
+                    .then(data => {
+                        this.stats = data;
+                        this.loading = false;
+                    })
+                    .catch(error => {
+                        console.error('加载SourceIP统计失败:', error);
+                        this.error = '加载失败: ' + error.message;
+                        this.loading = false;
+                    });
+            }
+        }
+    }
+</script>
+{{end}}

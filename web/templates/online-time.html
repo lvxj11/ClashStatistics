@@ -1,0 +1,81 @@
+{{define "content"}}
+<div x-data="onlineTime()" x-init="loadGanttChart()">
+    <h2 class="text-2xl font-bold mb-6">SourceIP 在线时间</h2>
+    
+    <div class="mb-6 flex flex-wrap items-center gap-4">
+        <label for="date" class="font-medium">选择日期:</label>
+        <input type="date" id="date" x-model="selectedDate" @change="loadGanttChart()" class="input input-bordered w-auto" />
+    </div>
+    
+    <div x-show="loading" class="flex justify-center py-8">
+        <span class="loading loading-spinner loading-lg"></span>
+    </div>
+    
+    <div x-show="error" class="alert alert-error" x-cloak>
+        <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span x-text="error"></span>
+    </div>
+    
+    <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
+        <div id="gantt-chart" class="gantt-container">
+            <div class="flex items-center mb-1">
+                <div class="w-[200px] flex-shrink-0"></div>
+                <template x-for="(segment, index) in 144" :key="index">
+                    <div class="w-[15px] text-center text-[10px]" x-text="(index % 6 === 0) ? Math.floor(index / 6) : (index % 3 === 0 ? '|' : '')"></div>
+                </template>
+            </div>
+            
+            <template x-for="(item, itemIndex) in ganttData" :key="itemIndex">
+                <div class="flex items-center mb-1">
+                    <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0" x-text="item.SourceIP || 'Unknown'" :title="item.SourceIP || 'Unknown'"></div>
+                    <template x-for="(slot, slotIndex) in 144" :key="slotIndex">
+                        <div class="gantt-cell" :class="slotIndex < item.TimeSlots.length && item.TimeSlots[slotIndex] ? 'gantt-cell-active' : ''"></div>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+    
+    <div x-show="!loading && !error && ganttData.length === 0" class="text-center py-8" x-cloak>
+        <div class="alert">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span>暂无数据</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    function onlineTime() {
+        return {
+            ganttData: [],
+            selectedDate: '{{.CurrentDate}}',
+            loading: true,
+            error: null,
+            loadGanttChart() {
+                this.loading = true;
+                this.error = null;
+                fetch('/api/gantt?date=' + this.selectedDate)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('HTTP error! status: ' + response.status);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        this.ganttData = data;
+                        this.loading = false;
+                    })
+                    .catch(error => {
+                        console.error('加载甘特图失败:', error);
+                        this.error = '加载甘特图失败: ' + error.message;
+                        this.loading = false;
+                    });
+            }
+        }
+    }
+</script>
+{{end}}

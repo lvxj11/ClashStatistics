@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html data-theme="dark">
+<head>
+    <title>{{.Title}} - Clash Statistics Dashboard</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        
+        .page-transition {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .gantt-container {
+            font-family: monospace;
+            line-height: 1.8;
+        }
+        
+        .gantt-cell {
+            width: 15px;
+            height: 20px;
+            border: 1px solid #444;
+        }
+        
+        .gantt-cell-active {
+            background-color: #4CAF50;
+            border-color: #45a049;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-base-200">
+    <div class="min-h-screen flex flex-col">
+        <div class="navbar bg-base-100 shadow-lg">
+            <div class="flex-1">
+                <a href="/" class="btn btn-ghost text-xl">Clash Statistics Dashboard</a>
+            </div>
+            <div class="flex-none gap-2">
+                <button onclick="location.reload()" class="btn btn-sm btn-primary">刷新数据</button>
+                <button onclick="refreshAPI()" class="btn btn-sm btn-secondary">API 刷新</button>
+            </div>
+        </div>
+        
+        <div class="tabs tabs-boxed bg-base-300 mx-4 mt-4 justify-center">
+            <a href="/host-stats" class="tab {{if eq .CurrentPage "host-stats"}}tab-active{{end}}">
+                Host/IP 统计
+            </a>
+            <a href="/sourceip-stats" class="tab {{if eq .CurrentPage "sourceip-stats"}}tab-active{{end}}">
+                SourceIP 统计
+            </a>
+            <a href="/online-time" class="tab {{if eq .CurrentPage "online-time"}}tab-active{{end}}">
+                SourceIP 在线时间
+            </a>
+        </div>
+        
+        <main class="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 page-transition">
+            {{template "content" .}}
+        </main>
+        
+        <footer class="footer footer-center p-4 bg-base-300 text-base-content">
+            <aside>
+                <p>Clash Statistics Dashboard &copy; 2024</p>
+            </aside>
+        </footer>
+    </div>
+    
+    <script>
+        function refreshAPI() {
+            fetch('/refresh')
+                .then(response => response.json())
+                .then(data => {
+                    alert('数据已刷新');
+                    location.reload();
+                })
+                .catch(error => {
+                    console.error('错误:', error);
+                    alert('刷新失败');
+                });
+        }
+        
+        function formatBytes(bytes) {
+            const unit = 1024;
+            if (bytes < unit) {
+                return bytes + ' B';
+            }
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let exp = Math.min(Math.floor(Math.log(bytes) / Math.log(unit)), units.length-1);
+            const size = bytes / Math.pow(unit, exp);
+            return size.toFixed(2) + ' ' + units[exp];
+        }
+    </script>
+</body>
+</html>

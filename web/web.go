@@ -104,6 +104,9 @@ func (s *Server) Start(port string) {
 
 	// 设置路由
 	http.HandleFunc("/", s.showDashboard)
+	http.HandleFunc("/host-stats", s.showHostStats)
+	http.HandleFunc("/sourceip-stats", s.showSourceIPStats)
+	http.HandleFunc("/online-time", s.showOnlineTime)
 	http.HandleFunc("/api/stats", s.getStats)
 	http.HandleFunc("/api/sourceip-stats", s.getSourceIPStats)
 	http.HandleFunc("/api/gantt", s.getGanttData)
@@ -223,25 +226,9 @@ func (s *Server) periodicallyRefreshData() {
 	}
 }
 
-// showDashboard 显示仪表板页面
+// showDashboard 显示仪表板页面（重定向到Host/IP统计页面）
 func (s *Server) showDashboard(w http.ResponseWriter, r *http.Request) {
-	// 解析模板文件
-	tmpl, err := template.ParseFS(templateFiles, "templates/dashboard.html")
-	if err != nil {
-		http.Error(w, "解析模板失败: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data := struct {
-		CurrentDate string
-	}{
-		CurrentDate: time.Now().Format("2006-01-02"),
-	}
-
-	err = tmpl.Execute(w, data)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	http.Redirect(w, r, "/host-stats", http.StatusMovedPermanently)
 }
 
 // getStats 返回统计信息的 API 端点
@@ -354,4 +341,43 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "数据已刷新"})
+}
+
+// showHostStats 显示Host/IP统计页面
+func (s *Server) showHostStats(w http.ResponseWriter, r *http.Request) {
+	s.renderPage(w, "Host/IP 统计", "host-stats", "host-stats.html")
+}
+
+// showSourceIPStats 显示SourceIP统计页面
+func (s *Server) showSourceIPStats(w http.ResponseWriter, r *http.Request) {
+	s.renderPage(w, "SourceIP 统计", "sourceip-stats", "sourceip-stats.html")
+}
+
+// showOnlineTime 显示SourceIP在线时间页面
+func (s *Server) showOnlineTime(w http.ResponseWriter, r *http.Request) {
+	s.renderPage(w, "SourceIP 在线时间", "online-time", "online-time.html")
+}
+
+// renderPage 渲染页面的通用函数
+func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTemplate string) {
+	tmpl, err := template.ParseFS(templateFiles, "templates/base.html", "templates/"+contentTemplate)
+	if err != nil {
+		http.Error(w, "解析模板失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := struct {
+		Title       string
+		CurrentPage string
+		CurrentDate string
+	}{
+		Title:       title,
+		CurrentPage: currentPage,
+		CurrentDate: time.Now().Format("2006-01-02"),
+	}
+
+	err = tmpl.Execute(w, data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
