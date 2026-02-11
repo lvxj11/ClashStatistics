@@ -517,10 +517,10 @@ func (d *Database) UpdateClosedTime(id, closedTime string) error {
 	}
 
 	if rowsAffected == 0 {
-		utils.GetLogger().Printf("警告: 没有找到ID为 %s 的记录\n", id)
-	} else {
-		utils.GetLogger().Printf("成功更新 %d 条记录的closed_time为 %s\n", rowsAffected, closedTime)
-	}
+			utils.GetLogger().Warn("警告: 没有找到ID为 %s 的记录\n", id)
+		} else {
+			utils.GetLogger().Info("成功更新 %d 条记录的closed_time为 %s\n", rowsAffected, closedTime)
+		}
 
 	return nil
 }

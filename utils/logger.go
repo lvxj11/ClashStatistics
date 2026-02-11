@@ -7,16 +7,27 @@ import (
 	"time"
 )
 
+// 日志级别常量
+const (
+	LogLevelDebug   = "debug"
+	LogLevelInfo    = "info"
+	LogLevelWarn    = "warn"
+	LogLevelError   = "error"
+	LogLevelStartup = "startup" // 启动级别，必然输出
+)
+
 // Logger 日志管理结构体
 type Logger struct {
-	file     *os.File
-	logPath  string
-	maxSize  int64 // 最大日志文件大小（字节）
-	lastSize int64 // 上次检查时的文件大小
+	file          *os.File
+	logPath       string
+	maxSize       int64  // 最大日志文件大小（字节）
+	lastSize      int64  // 上次检查时的文件大小
+	logLevel      string // 日志级别
+	consoleOutput bool   // 是否输出到控制台
 }
 
 // NewLogger 创建新的日志记录器
-func NewLogger(logPath string, maxSize int64) (*Logger, error) {
+func NewLogger(logPath string, maxSize int64, logLevel string, consoleOutput bool) (*Logger, error) {
 	// 确保日志目录存在
 	dir := filepath.Dir(logPath)
 	if dir != "." {
@@ -37,19 +48,56 @@ func NewLogger(logPath string, maxSize int64) (*Logger, error) {
 		return nil, fmt.Errorf("获取文件信息失败: %v", err)
 	}
 
+	// 验证日志级别
+	validLevels := map[string]bool{
+		LogLevelDebug: true,
+		LogLevelInfo:  true,
+		LogLevelWarn:  true,
+		LogLevelError: true,
+	}
+	if !validLevels[logLevel] {
+		logLevel = LogLevelWarn // 默认使用警告级别
+	}
+
 	return &Logger{
-		file:     file,
-		logPath:  logPath,
-		maxSize:  maxSize,
-		lastSize: fileInfo.Size(),
+		file:          file,
+		logPath:       logPath,
+		maxSize:       maxSize,
+		lastSize:      fileInfo.Size(),
+		logLevel:      logLevel,
+		consoleOutput: consoleOutput,
 	}, nil
+}
+
+// shouldLog 检查是否应该记录该级别的日志
+func (l *Logger) shouldLog(level string) bool {
+	// 启动级别必然输出，不受日志级别限制
+	if level == LogLevelStartup {
+		return true
+	}
+
+	levelOrder := map[string]int{
+		LogLevelDebug: 0,
+		LogLevelInfo:  1,
+		LogLevelWarn:  2,
+		LogLevelError: 3,
+	}
+
+	currentLevel, ok1 := levelOrder[l.logLevel]
+	msgLevel, ok2 := levelOrder[level]
+
+	if !ok1 || !ok2 {
+		return true // 如果级别无效，默认记录
+	}
+
+	return msgLevel >= currentLevel
 }
 
 // Write 写入日志
 func (l *Logger) Write(p []byte) (n int, err error) {
 	// 检查日志文件大小
-	if err := l.checkAndClean(); err != nil {
-		fmt.Printf("日志清理失败: %v\n", err)
+	if cleanErr := l.checkAndClean(); cleanErr != nil {
+		fmt.Printf("日志清理失败: %v\n", cleanErr)
 	}
 
 	// 写入时间戳
@@ -73,27 +121,98 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 }
 
 // Printf 格式化打印日志
-func (l *Logger) Printf(format string, v ...interface{}) {
+func (l *Logger) Printf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	l.Write([]byte(msg))
-	// 同时输出到控制台
-	fmt.Printf(msg)
+	// 根据配置决定是否输出到控制台
+	if l.consoleOutput {
+		fmt.Print(msg)
+	}
 }
 
 // Println 打印日志并换行
-func (l *Logger) Println(v ...interface{}) {
+func (l *Logger) Println(v ...any) {
 	msg := fmt.Sprintln(v...)
 	l.Write([]byte(msg))
-	// 同时输出到控制台
-	fmt.Println(v...)
+	// 根据配置决定是否输出到控制台
+	if l.consoleOutput {
+		fmt.Println(v...)
+	}
 }
 
 // Print 打印日志
-func (l *Logger) Print(v ...interface{}) {
+func (l *Logger) Print(v ...any) {
 	msg := fmt.Sprint(v...)
 	l.Write([]byte(msg))
-	// 同时输出到控制台
-	fmt.Print(v...)
+	// 根据配置决定是否输出到控制台
+	if l.consoleOutput {
+		fmt.Print(v...)
+	}
+}
+
+// Debug 输出调试级别日志
+func (l *Logger) Debug(format string, v ...any) {
+	if l.shouldLog(LogLevelDebug) {
+		msg := fmt.Sprintf("[DEBUG] "+format, v...)
+		l.Write([]byte(msg))
+		// 根据配置决定是否输出到控制台
+		if l.consoleOutput {
+			fmt.Print(msg)
+		}
+	}
+}
+
+// Info 输出信息级别日志
+func (l *Logger) Info(format string, v ...any) {
+	if l.shouldLog(LogLevelInfo) {
+		msg := fmt.Sprintf("[INFO] "+format, v...)
+		l.Write([]byte(msg))
+		// 根据配置决定是否输出到控制台
+		if l.consoleOutput {
+			fmt.Print(msg)
+		}
+	}
+}
+
+// Startup 输出启动级别日志，必然输出
+func (l *Logger) Startup(format string, v ...any) {
+	if l.shouldLog(LogLevelStartup) {
+		msg := fmt.Sprintf("[STARTUP] "+format, v...)
+		l.Write([]byte(msg))
+		// 根据配置决定是否输出到控制台
+		if l.consoleOutput {
+			fmt.Print(msg)
+		}
+	}
+}
+
+// Warn 输出警告级别日志
+func (l *Logger) Warn(format string, v ...any) {
+	if l.shouldLog(LogLevelWarn) {
+		msg := fmt.Sprintf("[WARN] "+format, v...)
+		l.Write([]byte(msg))
+		// 根据配置决定是否输出到控制台
+		if l.consoleOutput {
+			fmt.Print(msg)
+		}
+	}
+}
+
+// Error 输出错误级别日志
+func (l *Logger) Error(format string, v ...any) {
+	if l.shouldLog(LogLevelError) {
+		msg := fmt.Sprintf("[ERROR] "+format, v...)
+		l.Write([]byte(msg))
+		// 根据配置决定是否输出到控制台
+		if l.consoleOutput {
+			fmt.Print(msg)
+		}
+	}
+}
+
+// SetConsoleOutput 设置是否输出到控制台
+func (l *Logger) SetConsoleOutput(enable bool) {
+	l.consoleOutput = enable
 }
 
 // checkAndClean 检查并清理日志文件
@@ -163,15 +282,39 @@ func InitLogger() error {
 	logPath := "./clash_statistics.log"
 	// 默认最大日志文件大小 (10MB)
 	maxSize := int64(10 * 1024 * 1024)
+	// 默认日志级别
+	defaultLogLevel := LogLevelWarn
+	// 默认不输出到控制台
+	consoleOutput := false
 
 	var err error
-	DefaultLogger, err = NewLogger(logPath, maxSize)
+	DefaultLogger, err = NewLogger(logPath, maxSize, defaultLogLevel, consoleOutput)
 	if err != nil {
 		return fmt.Errorf("初始化日志失败: %v", err)
 	}
 
 	// 记录日志初始化信息
-	DefaultLogger.Println("日志系统初始化成功")
+	DefaultLogger.Startup("日志系统初始化成功，默认日志级别: %s\n", defaultLogLevel)
+	return nil
+}
+
+// InitLoggerWithLevel 使用指定日志级别初始化全局日志实例
+func InitLoggerWithLevel(logLevel string) error {
+	// 默认日志文件路径
+	logPath := "./clash_statistics.log"
+	// 默认最大日志文件大小 (10MB)
+	maxSize := int64(10 * 1024 * 1024)
+	// 启动信息同时输出到控制台和日志文件
+	consoleOutput := true
+
+	var err error
+	DefaultLogger, err = NewLogger(logPath, maxSize, logLevel, consoleOutput)
+	if err != nil {
+		return fmt.Errorf("初始化日志失败: %v", err)
+	}
+
+	// 记录日志初始化信息
+	DefaultLogger.Startup("日志系统初始化成功，日志级别: %s\n", logLevel)
 	return nil
 }
 

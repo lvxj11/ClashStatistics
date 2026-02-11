@@ -41,14 +41,19 @@ func (s *Server) Start(port string) {
 	http.HandleFunc("/refresh", s.refreshData)
 
 	log := utils.GetLogger()
-	log.Printf("服务器启动在端口 %s\n", port)
-
+	log.Startup("服务器启动在端口 %s\n", port)
+	
+	// 启动完成后，关闭控制台输出，只保留文件输出
+	log.SetConsoleOutput(false)
+	
 	// 在单独的 goroutine 中定期获取数据
 	go s.periodicallyRefreshData()
-
+	
 	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
-		log.Printf("启动服务器失败: %v\n", err)
+		// 启动失败时，确保错误信息也输出到控制台
+		log.SetConsoleOutput(true)
+		log.Error("启动服务器失败: %v\n", err)
 		return
 	}
 }
@@ -63,7 +68,7 @@ func (s *Server) periodicallyRefreshData() {
 		// 从 Clash API 获取连接信息
 		connectionInfo, err := utils.GetConnectionsFromClash(s.config.ClashHost, s.config.ClashSecret, s.config.ClashInterval)
 		if err != nil {
-			log.Printf("获取连接信息失败: %v\n", err)
+			log.Error("获取连接信息失败: %v\n", err)
 			continue
 		}
 
@@ -76,7 +81,7 @@ func (s *Server) periodicallyRefreshData() {
 		// 获取数据库中所有未关闭的连接ID
 		openConnections, err := s.db.GetOpenConnectionIDs()
 		if err != nil {
-			log.Printf("获取未关闭连接ID失败: %v\n", err)
+			log.Error("获取未关闭连接ID失败: %v\n", err)
 		} else {
 			// 检查哪些连接在数据库中存在但当前不在活跃列表中，这些连接已经关闭
 			for _, connID := range openConnections {
@@ -85,9 +90,9 @@ func (s *Server) periodicallyRefreshData() {
 					closedTime := time.Now().Format("2006-01-02 15:04:05")
 					err := s.db.SetConnectionClosedTime(connID, closedTime)
 					if err != nil {
-						log.Printf("设置连接关闭时间失败: %v\n", err)
+						log.Error("设置连接关闭时间失败: %v\n", err)
 					} else {
-						log.Printf("连接 %s 已关闭，关闭时间: %s\n", connID, closedTime)
+						log.Info("连接 %s 已关闭，关闭时间: %s\n", connID, closedTime)
 					}
 				}
 			}
@@ -139,9 +144,9 @@ func (s *Server) periodicallyRefreshData() {
 		// 保存当前连接到数据库（每次保存时都会更新closed_time为当前时间）
 		err = s.db.SaveConnections(dbConnections)
 		if err != nil {
-			log.Printf("保存连接信息到数据库失败: %v\n", err)
+			log.Error("保存连接信息到数据库失败: %v\n", err)
 		} else {
-			log.Printf("成功保存 %d 个连接到数据库\n", len(dbConnections))
+			log.Info("成功保存 %d 个连接到数据库\n", len(dbConnections))
 		}
 	}
 }
@@ -185,15 +190,15 @@ func (s *Server) getSourceIPStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	log := utils.GetLogger()
-	log.Println("正在获取SourceIP统计数据...")
+	log.Info("正在获取SourceIP统计数据...\n")
 	stats, err := s.db.GetSourceIPStats()
 	if err != nil {
-		log.Printf("获取SourceIP统计数据失败: %v\n", err)
+		log.Error("获取SourceIP统计数据失败: %v\n", err)
 		http.Error(w, "获取SourceIP统计数据失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("成功获取 %d 条SourceIP统计数据\n", len(stats))
+	log.Info("成功获取 %d 条SourceIP统计数据\n", len(stats))
 	json.NewEncoder(w).Encode(stats)
 }
 
