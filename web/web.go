@@ -20,11 +20,80 @@ type Server struct {
 	db     *database.Database
 }
 
-// NewServer 创建新的服务器实例
+// NewServer 创建一个新的服务器实例
 func NewServer(config *utils.Config, db *database.Database) *Server {
 	return &Server{
 		config: config,
 		db:     db,
+	}
+}
+
+// startDatabaseMaintenance 启动数据库维护任务
+func (s *Server) startDatabaseMaintenance() {
+	log := utils.GetLogger()
+
+	// 初始化定时器
+	cleanupTicker := time.NewTicker(24 * time.Hour)
+	vacuumTicker := time.NewTicker(time.Duration(s.config.DBVacuumInterval) * time.Hour)
+
+	// 立即执行一次初始化维护
+	s.performDatabaseMaintenance()
+
+	for {
+		select {
+		case <-cleanupTicker.C:
+			// 每天执行一次数据清理
+			if err := s.db.CleanupOldData(s.config.DBCleanupDays); err != nil {
+				log.Error("清理过期数据失败: %v\n", err)
+			} else {
+				log.Info("成功清理过期数据\n")
+			}
+		case <-vacuumTicker.C:
+			// 定期执行数据库VACUUM
+			if err := s.db.Vacuum(); err != nil {
+				log.Error("数据库VACUUM失败: %v\n", err)
+			} else {
+				log.Info("数据库VACUUM成功\n")
+			}
+		}
+	}
+}
+
+// performDatabaseMaintenance 执行数据库维护任务
+func (s *Server) performDatabaseMaintenance() {
+	log := utils.GetLogger()
+
+	// 检查数据库大小
+	dbSize, err := s.db.GetDatabaseSize()
+	if err != nil {
+		log.Error("获取数据库大小失败: %v\n", err)
+	} else {
+		log.Info("当前数据库大小: %d bytes (%.2f MB)\n", dbSize, float64(dbSize)/1024/1024)
+	}
+
+	// 执行一次数据清理
+	if err := s.db.CleanupOldData(s.config.DBCleanupDays); err != nil {
+		log.Error("初始化数据清理失败: %v\n", err)
+	} else {
+		log.Info("初始化数据清理完成\n")
+	}
+
+	// 执行一次数据库VACUUM
+	if err := s.db.Vacuum(); err != nil {
+		log.Error("初始化数据库VACUUM失败: %v\n", err)
+	} else {
+		log.Info("初始化数据库VACUUM完成\n")
+	}
+
+	// 再次检查数据库大小，比较清理前后的变化
+	newDbSize, err := s.db.GetDatabaseSize()
+	if err != nil {
+		log.Error("获取清理后数据库大小失败: %v\n", err)
+	} else {
+		log.Info("清理后数据库大小: %d bytes (%.2f MB)\n", newDbSize, float64(newDbSize)/1024/1024)
+		if dbSize > newDbSize {
+			log.Info("数据库大小减少: %d bytes (%.2f MB)\n", dbSize-newDbSize, float64(dbSize-newDbSize)/1024/1024)
+		}
 	}
 }
 
@@ -42,13 +111,16 @@ func (s *Server) Start(port string) {
 
 	log := utils.GetLogger()
 	log.Startup("服务器启动在端口 %s\n", port)
-	
+
 	// 启动完成后，关闭控制台输出，只保留文件输出
 	log.SetConsoleOutput(false)
-	
+
 	// 在单独的 goroutine 中定期获取数据
 	go s.periodicallyRefreshData()
-	
+
+	// 在单独的 goroutine 中定期执行数据库维护任务
+	go s.startDatabaseMaintenance()
+
 	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		// 启动失败时，确保错误信息也输出到控制台

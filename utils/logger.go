@@ -20,20 +20,18 @@ const (
 type Logger struct {
 	file          *os.File
 	logPath       string
-	maxSize       int64  // 最大日志文件大小（字节）
-	lastSize      int64  // 上次检查时的文件大小
+	maxSize       int64 // 最大日志文件大小（字节）
+	lastSize      int64 // 上次检查时的文件大小
 	logLevel      string // 日志级别
 	consoleOutput bool   // 是否输出到控制台
 }
 
-// NewLogger 创建新的日志记录器
+// NewLogger 创建新的日志实例
 func NewLogger(logPath string, maxSize int64, logLevel string, consoleOutput bool) (*Logger, error) {
 	// 确保日志目录存在
-	dir := filepath.Dir(logPath)
-	if dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, fmt.Errorf("创建日志目录失败: %v", err)
-		}
+	logDir := filepath.Dir(logPath)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return nil, fmt.Errorf("创建日志目录失败: %v", err)
 	}
 
 	// 打开或创建日志文件
@@ -104,23 +102,79 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	logEntry := fmt.Sprintf("[%s] %s", timestamp, p)
 
-	// 写入日志文件
+	// 写入文件
 	n, err = l.file.Write([]byte(logEntry))
 	if err != nil {
 		return n, err
 	}
 
-	// 刷新缓冲区
+	// 刷新缓冲区，确保日志立即写入
 	if err := l.file.Sync(); err != nil {
 		return n, err
 	}
 
-	// 更新文件大小
-	l.lastSize += int64(n)
 	return n, nil
 }
 
-// Printf 格式化打印日志
+// checkAndClean 检查并清理日志文件
+func (l *Logger) checkAndClean() error {
+	// 获取当前文件大小
+	fileInfo, err := l.file.Stat()
+	if err != nil {
+		return err
+	}
+
+	currentSize := fileInfo.Size()
+
+	// 如果文件大小超过限制，清理日志
+	if currentSize > l.maxSize {
+		// 关闭当前文件
+		if err := l.file.Close(); err != nil {
+			return err
+		}
+
+		// 创建备份文件名
+		backupPath := l.logPath + ".old"
+
+		// 删除旧的备份文件
+		os.Remove(backupPath)
+
+		// 将当前日志文件重命名为备份文件
+		if err := os.Rename(l.logPath, backupPath); err != nil {
+			return err
+		}
+
+		// 创建新的日志文件
+		newFile, err := os.Create(l.logPath)
+		if err != nil {
+			return err
+		}
+
+		// 更新文件指针和大小
+		l.file = newFile
+		l.lastSize = 0
+
+		// 记录日志清理信息
+		cleanMsg := fmt.Sprintf("日志文件已清理，旧文件保存为: %s\n", backupPath)
+		l.file.Write([]byte(cleanMsg))
+		l.file.Sync()
+		fmt.Print(cleanMsg)
+	}
+
+	return nil
+}
+
+// Close 关闭日志文件
+func (l *Logger) Close() error {
+	return l.file.Close()
+}
+
+// SetConsoleOutput 设置是否输出到控制台
+func (l *Logger) SetConsoleOutput(enable bool) {
+	l.consoleOutput = enable
+}
+
+// Printf 格式化输出日志
 func (l *Logger) Printf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	l.Write([]byte(msg))
@@ -130,23 +184,23 @@ func (l *Logger) Printf(format string, v ...any) {
 	}
 }
 
-// Println 打印日志并换行
+// Println 输出一行日志
 func (l *Logger) Println(v ...any) {
 	msg := fmt.Sprintln(v...)
 	l.Write([]byte(msg))
 	// 根据配置决定是否输出到控制台
 	if l.consoleOutput {
-		fmt.Println(v...)
+		fmt.Print(msg)
 	}
 }
 
-// Print 打印日志
+// Print 输出日志
 func (l *Logger) Print(v ...any) {
 	msg := fmt.Sprint(v...)
 	l.Write([]byte(msg))
 	// 根据配置决定是否输出到控制台
 	if l.consoleOutput {
-		fmt.Print(v...)
+		fmt.Print(msg)
 	}
 }
 
@@ -210,67 +264,6 @@ func (l *Logger) Error(format string, v ...any) {
 	}
 }
 
-// SetConsoleOutput 设置是否输出到控制台
-func (l *Logger) SetConsoleOutput(enable bool) {
-	l.consoleOutput = enable
-}
-
-// checkAndClean 检查并清理日志文件
-func (l *Logger) checkAndClean() error {
-	// 获取当前文件大小
-	fileInfo, err := l.file.Stat()
-	if err != nil {
-		return err
-	}
-
-	currentSize := fileInfo.Size()
-
-	// 如果文件大小超过限制，清理日志
-	if currentSize > l.maxSize {
-		// 关闭当前文件
-		if err := l.file.Close(); err != nil {
-			return err
-		}
-
-		// 创建备份文件名
-		backupPath := l.logPath + ".old"
-
-		// 删除旧的备份文件
-		os.Remove(backupPath)
-
-		// 将当前日志文件重命名为备份文件
-		if err := os.Rename(l.logPath, backupPath); err != nil {
-			return err
-		}
-
-		// 创建新的日志文件
-		newFile, err := os.Create(l.logPath)
-		if err != nil {
-			return err
-		}
-
-		// 更新文件指针和大小
-		l.file = newFile
-		l.lastSize = 0
-
-		// 记录日志清理信息
-		cleanMsg := fmt.Sprintf("日志文件已清理，旧文件保存为: %s\n", backupPath)
-		l.file.Write([]byte(cleanMsg))
-		l.file.Sync()
-		fmt.Print(cleanMsg)
-	}
-
-	return nil
-}
-
-// Close 关闭日志文件
-func (l *Logger) Close() error {
-	if l.file != nil {
-		return l.file.Close()
-	}
-	return nil
-}
-
 // 全局日志实例
 var (
 	DefaultLogger *Logger
@@ -278,8 +271,13 @@ var (
 
 // InitLogger 初始化全局日志实例
 func InitLogger() error {
+	// 确保数据目录存在
+	if err := os.MkdirAll("./data", 0755); err != nil {
+		return fmt.Errorf("创建数据目录失败: %v", err)
+	}
+	
 	// 默认日志文件路径
-	logPath := "./clash_statistics.log"
+	logPath := "./data/clash_statistics.log"
 	// 默认最大日志文件大小 (10MB)
 	maxSize := int64(10 * 1024 * 1024)
 	// 默认日志级别
@@ -300,8 +298,13 @@ func InitLogger() error {
 
 // InitLoggerWithLevel 使用指定日志级别初始化全局日志实例
 func InitLoggerWithLevel(logLevel string) error {
+	// 确保数据目录存在
+	if err := os.MkdirAll("./data", 0755); err != nil {
+		return fmt.Errorf("创建数据目录失败: %v", err)
+	}
+	
 	// 默认日志文件路径
-	logPath := "./clash_statistics.log"
+	logPath := "./data/clash_statistics.log"
 	// 默认最大日志文件大小 (10MB)
 	maxSize := int64(10 * 1024 * 1024)
 	// 启动信息同时输出到控制台和日志文件
@@ -321,12 +324,9 @@ func InitLoggerWithLevel(logLevel string) error {
 // GetLogger 获取全局日志实例
 func GetLogger() *Logger {
 	if DefaultLogger == nil {
-		// 如果日志未初始化，创建一个默认的控制台日志记录器
-		DefaultLogger = &Logger{
-			file:     os.Stdout,
-			logPath:  "stdout",
-			maxSize:  0,
-			lastSize: 0,
+		// 如果日志实例未初始化，初始化一个默认实例
+		if err := InitLogger(); err != nil {
+			panic(fmt.Sprintf("初始化日志失败: %v", err))
 		}
 	}
 	return DefaultLogger

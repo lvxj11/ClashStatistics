@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  clash-statistics:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data  # 挂载数据目录，存储数据库和日志
+    env_file:
+      - .env  # 从 .env 文件加载环境变量
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped

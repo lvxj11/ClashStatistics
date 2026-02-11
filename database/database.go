@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,43 +21,72 @@ type Database struct {
 
 // Connection 表示单个连接
 type Connection struct {
-	ID          string
-	Chain       []string
-	Rule        string
-	RulePayload string
-	Download    int64
-	Upload      int64
-	SourceIP    string
-	SourcePort  string
-	DestPort    string
-	DestIP      string
-	StartTime   string
-	ClosedTime  string
+	ID          string   `json:"id"`
+	Chain       []string `json:"chain"`
+	Rule        string   `json:"rule"`
+	RulePayload string   `json:"rulePayload"`
+	Download    int64    `json:"download"`
+	Upload      int64    `json:"upload"`
+	SourceIP    string   `json:"srcIP"`
+	SourcePort  string   `json:"srcPort"`
+	DestPort    string   `json:"dstPort"`
+	DestIP      string   `json:"dstIP"`
+	StartTime   string   `json:"start"`
+	ClosedTime  string   `json:"closed,omitempty"` // 连接关闭时间
+	Metadata    Metadata `json:"metadata"`         // 保留原始结构用于解析
 	// 从 Metadata 展开的字段（用于数据库存储）
-	Network           string
-	ConnectionType    string
-	SourceIPAddr      string
-	DestinationIP     string
-	SourcePortNum     string
-	DestinationPort   string
-	Host              string
-	DNSMode           string
-	Uid               int
-	Process           string
-	ProcessPath       string
-	SpecialProxy      string
-	SpecialRules      string
-	RemoteDestination string
-	DSCP              int
-	SniffHost         string
-	InboundIP         string
-	InboundPort       string
-	InboundName       string
-	InboundUser       string
-	SourceGeoIP       interface{}
-	DestinationGeoIP  interface{}
-	SourceIPASN       string
-	DestinationIPASN  string
+	Network           string      `json:"-"` // 不从 JSON 解析，而是从 Metadata 映射
+	ConnectionType    string      `json:"-"` // 避免与 Go 关键字冲突
+	SourceIPAddr      string      `json:"-"`
+	DestinationIP     string      `json:"-"`
+	SourcePortNum     string      `json:"-"`
+	DestinationPort   string      `json:"-"`
+	Host              string      `json:"-"`
+	DNSMode           string      `json:"-"`
+	Uid               int         `json:"-"`
+	Process           string      `json:"-"`
+	ProcessPath       string      `json:"-"`
+	SpecialProxy      string      `json:"-"`
+	SpecialRules      string      `json:"-"`
+	RemoteDestination string      `json:"-"`
+	DSCP              int         `json:"-"`
+	SniffHost         string      `json:"-"`
+	InboundIP         string      `json:"-"`
+	InboundPort       string      `json:"-"`
+	InboundName       string      `json:"-"`
+	InboundUser       string      `json:"-"`
+	SourceGeoIP       interface{} `json:"-"` // 可能为 null
+	DestinationGeoIP  interface{} `json:"-"` // 可能为 null
+	SourceIPASN       string      `json:"-"`
+	DestinationIPASN  string      `json:"-"`
+}
+
+// Metadata 包含连接元数据
+type Metadata struct {
+	Network           string      `json:"network"`
+	Type              string      `json:"type"`
+	SourceIP          string      `json:"sourceIP"`
+	DestIP            string      `json:"destinationIP"`
+	SourcePort        string      `json:"sourcePort"`
+	DestPort          string      `json:"destinationPort"`
+	Host              string      `json:"host"`
+	DNSMode           string      `json:"dnsMode"`
+	Uid               int         `json:"uid"`
+	Process           string      `json:"process"`
+	ProcessPath       string      `json:"processPath"`
+	SpecialProxy      string      `json:"specialProxy"`
+	SpecialRules      string      `json:"specialRules"`
+	RemoteDestination string      `json:"remoteDestination"`
+	DSCP              int         `json:"dscp"`
+	SniffHost         string      `json:"sniffHost"`
+	InboundIP         string      `json:"inboundIP"`
+	InboundPort       string      `json:"inboundPort"`
+	InboundName       string      `json:"inboundName"`
+	InboundUser       string      `json:"inboundUser"`
+	SourceGeoIP       interface{} `json:"sourceGeoIP"`      // 可能为 null
+	DestinationGeoIP  interface{} `json:"destinationGeoIP"` // 可能为 null
+	SourceIPASN       string      `json:"sourceIPASN"`
+	DestinationIPASN  string      `json:"destinationIPASN"`
 }
 
 // StatsEntry 表示统计条目
@@ -75,7 +105,12 @@ type GanttEntry struct {
 
 // InitDB 初始化数据库
 func InitDB() (*Database, error) {
-	db, err := sql.Open("sqlite3", "./clash_statistics.db")
+	// 确保数据目录存在
+	if err := os.MkdirAll("./data", 0755); err != nil {
+		return nil, fmt.Errorf("创建数据目录失败: %v", err)
+	}
+
+	db, err := sql.Open("sqlite3", "./data/clash_statistics.db")
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +156,14 @@ func InitDB() (*Database, error) {
 		dest_real_port TEXT,
 		last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+	
+	-- 创建索引
+	CREATE INDEX IF NOT EXISTS idx_connections_host ON connections(host);
+	CREATE INDEX IF NOT EXISTS idx_connections_destination_ip ON connections(destination_ip);
+	CREATE INDEX IF NOT EXISTS idx_connections_source_ip ON connections(source_ip);
+	CREATE INDEX IF NOT EXISTS idx_connections_closed_time ON connections(closed_time);
+	CREATE INDEX IF NOT EXISTS idx_connections_last_seen ON connections(last_seen);
+	CREATE INDEX IF NOT EXISTS idx_connections_start_time ON connections(start_time);
 	`
 
 	_, err = db.Exec(sqlStmt)
@@ -517,12 +560,59 @@ func (d *Database) UpdateClosedTime(id, closedTime string) error {
 	}
 
 	if rowsAffected == 0 {
-			utils.GetLogger().Warn("警告: 没有找到ID为 %s 的记录\n", id)
-		} else {
-			utils.GetLogger().Info("成功更新 %d 条记录的closed_time为 %s\n", rowsAffected, closedTime)
-		}
+		utils.GetLogger().Warn("警告: 没有找到ID为 %s 的记录\n", id)
+	} else {
+		utils.GetLogger().Info("成功更新 %d 条记录的closed_time为 %s\n", rowsAffected, closedTime)
+	}
 
 	return nil
+}
+
+// CleanupOldData 清理过期数据
+func (d *Database) CleanupOldData(days int) error {
+	cutoffTime := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+
+	// 批量删除过期数据
+	stmt, err := d.db.Prepare("DELETE FROM connections WHERE last_seen < ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	result, err := stmt.Exec(cutoffTime)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	utils.GetLogger().Info("清理了 %d 条过期记录\n", rowsAffected)
+	return nil
+}
+
+// Vacuum 执行数据库维护，回收空间
+func (d *Database) Vacuum() error {
+	utils.GetLogger().Info("开始执行数据库VACUUM操作\n")
+
+	_, err := d.db.Exec("VACUUM")
+	if err != nil {
+		return err
+	}
+
+	utils.GetLogger().Info("数据库VACUUM操作完成\n")
+	return nil
+}
+
+// GetDatabaseSize 获取数据库文件大小
+func (d *Database) GetDatabaseSize() (int64, error) {
+	fileInfo, err := os.Stat("./data/clash_statistics.db")
+	if err != nil {
+		return 0, err
+	}
+	return fileInfo.Size(), nil
 }
 
 // Close 关闭数据库连接
