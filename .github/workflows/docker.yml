@@ -11,6 +11,7 @@ on:
     branches:
       - main
       - master
+  workflow_dispatch:  # 添加手动触发能力
 
 env:
   DOCKER_IMAGE: lvxj11/clash-statistics
