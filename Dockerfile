@@ -15,7 +15,7 @@ COPY . .
 RUN go build -o clash-statistics .
 
 # 最终镜像
-FROM alpine:3.19
+FROM alpine:3.23
 
 # 设置工作目录
 WORKDIR /app
