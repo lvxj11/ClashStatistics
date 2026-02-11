@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clash Statistics Dashboard</title>
+    <meta charset="utf-8">
+    <style>
+        :root {
+            /* 暗色主题 */
+            --bg-color: #1e1e1e;
+            --text-color: #e0e0e0;
+            --header-bg: #2d2d2d;
+            --tab-bg: #3c3c3c;
+            --tab-active-bg: #455a64;
+            --tab-active-text: white;
+            --table-border: #444;
+            --table-header-bg: #3c3c3c;
+            --table-row-even-bg: #2d2d2d;
+            --button-bg: #455a64;
+            --button-hover-bg: #546e7a;
+            --button-text: white;
+            --gantt-grid-color: #444;
+            --gantt-active-color: #4CAF50;
+            --gantt-active-border: #45a049;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        
+        .header {
+            background-color: var(--header-bg);
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        
+        .tabs {
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            display: inline-block;
+            padding: 10px 20px;
+            margin-right: 5px;
+            background-color: var(--tab-bg);
+            cursor: pointer;
+            border-radius: 5px 5px 0 0;
+            transition: background-color 0.3s;
+        }
+        
+        .tab.active {
+            background-color: var(--tab-active-bg);
+            color: var(--tab-active-text);
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .stats-table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        
+        .stats-table th, .stats-table td {
+            border: 1px solid var(--table-border);
+            padding: 12px;
+            text-align: left;
+        }
+        
+        .stats-table th {
+            background-color: var(--table-header-bg);
+        }
+        
+        .stats-table tr:nth-child(even) {
+            background-color: var(--table-row-even-bg);
+        }
+        
+        button {
+            padding: 10px 15px;
+            background-color: var(--button-bg);
+            color: var(--button-text);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: var(--button-hover-bg);
+        }
+        
+        input[type="date"] {
+            background-color: var(--header-bg);
+            color: var(--text-color);
+            border: 1px solid var(--table-border);
+            padding: 5px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Clash Statistics Dashboard</h1>
+        <button onclick="location.reload()">刷新数据</button>
+        <button onclick="refreshAPI()">API 刷新</button>
+    </div>
+    
+    <div class="tabs">
+        <div class="tab active" onclick="showTab(1)">Host/IP 统计</div>
+        <div class="tab" onclick="showTab(2)">SourceIP 统计</div>
+        <div class="tab" onclick="showTab(3)">SourceIP 在线时间</div>
+    </div>
+    
+    <div id="tab1" class="tab-content active">
+        <h2>流量统计 (按 Host/IP 排序)</h2>
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>排名</th>
+                    <th>Host/IP</th>
+                    <th>下载量</th>
+                    <th>上传量</th>
+                    <th>总计</th>
+                </tr>
+            </thead>
+            <tbody id="stats-body">
+                <!-- 数据将通过JavaScript动态加载 -->
+            </tbody>
+        </table>
+    </div>
+    
+    <div id="tab2" class="tab-content">
+        <h2>流量统计 (按 SourceIP 排序)</h2>
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>排名</th>
+                    <th>SourceIP</th>
+                    <th>下载量</th>
+                    <th>上传量</th>
+                    <th>总计</th>
+                </tr>
+            </thead>
+            <tbody id="sourceip-stats-body">
+                <!-- 数据将通过JavaScript动态加载 -->
+            </tbody>
+        </table>
+    </div>
+    
+    <div id="tab3" class="tab-content">
+        <h2>SourceIP 在线时间</h2>
+        <label for="date">选择日期: </label>
+        <input type="date" id="date" value="{{.CurrentDate}}" onchange="loadGanttChart(this.value)">
+        <div id="gantt-container" style="margin-top: 20px;">
+            <!-- 甘特图将在这里显示 -->
+            <div id="gantt-chart"></div>
+        </div>
+    </div>
+    
+    <script>
+        // 页面加载时获取统计数据
+        window.onload = function() {
+            loadStats();
+            loadSourceIPStats();
+            const params = new URLSearchParams(window.location.search);
+            const page = params.get('page') || '1';
+            showTab(parseInt(page));
+        };
+        
+        function showTab(tabNumber) {
+            // 隐藏所有标签内容
+            var tabContents = document.getElementsByClassName('tab-content');
+            for (var i = 0; i < tabContents.length; i++) {
+                tabContents[i].classList.remove('active');
+            }
+            
+            // 移除所有标签的活动状态
+            var tabs = document.getElementsByClassName('tab');
+            for (var i = 0; i < tabs.length; i++) {
+                tabs[i].classList.remove('active');
+            }
+            
+            // 显示选中的标签内容
+            document.getElementById('tab' + tabNumber).classList.add('active');
+            tabs[tabNumber-1].classList.add('active');
+            
+            // 如果切换到甘特图标签，加载图表
+            if(tabNumber === 3) {
+                loadGanttChart(document.getElementById('date').value);
+            }
+        }
+        
+        function loadStats() {
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(data => {
+                    displayStats(data);
+                })
+                .catch(error => {
+                    console.error('加载统计失败:', error);
+                    document.getElementById('stats-body').innerHTML = '<tr><td colspan="5">加载失败</td></tr>';
+                });
+        }
+        
+        function loadSourceIPStats() {
+            fetch('/api/sourceip-stats')
+                .then(response => response.json())
+                .then(data => {
+                    displaySourceIPStats(data);
+                })
+                .catch(error => {
+                    console.error('加载SourceIP统计失败:', error);
+                    document.getElementById('sourceip-stats-body').innerHTML = '<tr><td colspan="5">加载失败</td></tr>';
+                });
+        }
+        
+        function displayStats(data) {
+            let html = '';
+            if (Array.isArray(data)) {
+                data.forEach((item, index) => {
+                    html += '<tr>';
+                    html += '<td>' + (index + 1) + '</td>';
+                    html += '<td>' + item.Target + '</td>';
+                    html += '<td>' + formatBytes(item.Download) + '</td>';
+                    html += '<td>' + formatBytes(item.Upload) + '</td>';
+                    html += '<td>' + formatBytes(item.Total) + '</td>';
+                    html += '</tr>';
+                });
+            } else {
+                html += '<tr><td colspan="5">无效的数据格式</td></tr>';
+            }
+            document.getElementById('stats-body').innerHTML = html;
+        }
+        
+        function displaySourceIPStats(data) {
+            let html = '';
+            if (Array.isArray(data)) {
+                data.forEach((item, index) => {
+                    html += '<tr>';
+                    html += '<td>' + (index + 1) + '</td>';
+                    html += '<td>' + item.Target + '</td>';
+                    html += '<td>' + formatBytes(item.Download) + '</td>';
+                    html += '<td>' + formatBytes(item.Upload) + '</td>';
+                    html += '<td>' + formatBytes(item.Total) + '</td>';
+                    html += '</tr>';
+                });
+            } else {
+                html += '<tr><td colspan="5">无效的数据格式</td></tr>';
+            }
+            document.getElementById('sourceip-stats-body').innerHTML = html;
+        }
+        
+        function loadGanttChart(date) {
+            fetch('/api/gantt?date=' + date)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Gantt chart data:', data); // 调试信息
+                    displayGanttChart(data);
+                })
+                .catch(error => {
+                    console.error('加载甘特图失败:', error);
+                    document.getElementById('gantt-chart').innerHTML = '<p>加载甘特图失败: ' + error.message + '</p>';
+                });
+        }
+        
+        function displayGanttChart(data) {
+            let html = '<div style="font-family: monospace; line-height: 1.8;">';
+            html += '<div style="display: flex; align-items: center; margin-bottom: 5px;"><div style="width: 200px;"></div>';
+            
+            // 创建144个10分钟段（24小时 * 6段/小时）
+            for (let segment = 0; segment < 144; segment++) {
+                if (segment % 6 === 0) { // 每6段（1小时）显示一次小时数
+                    const hour = Math.floor(segment / 6);
+                    html += '<div style="width: 15px; text-align: center; font-size: 10px;">' + hour + '</div>';
+                } else if (segment % 3 === 0) { // 每3段（30分钟）显示一个竖线
+                    html += '<div style="width: 15px; text-align: center; font-size: 8px; color: #999;">|</div>';
+                } else {
+                    html += '<div style="width: 15px;"></div>';
+                }
+            }
+            html += '</div>';
+            
+            if (!Array.isArray(data)) {
+                document.getElementById('gantt-chart').innerHTML = '<p>无效的数据格式</p>';
+                return;
+            }
+            
+            data.forEach(item => {
+                html += '<div style="display: flex; align-items: center; margin-bottom: 5px;">';
+                
+                // 根据SourceIP决定显示内容
+                let displayIP = item.SourceIP || 'Unknown';
+                
+                html += '<div style="width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + displayIP + '">' + displayIP + '</div>';
+                
+                // 创建144个10分钟段的时间轴，直接使用返回的TimeSlots数组
+                for (let i = 0; i < 144; i++) {
+                    if (i < item.TimeSlots.length && item.TimeSlots[i]) {
+                        html += '<div style="width: 15px; height: 20px; background-color: var(--gantt-active-color); border: 1px solid var(--gantt-active-border);"></div>';
+                    } else {
+                        html += '<div style="width: 15px; height: 20px; border: 1px solid var(--gantt-grid-color);"></div>';
+                    }
+                }
+                
+                html += '</div>';
+            });
+            
+            html += '</div>';
+            document.getElementById('gantt-chart').innerHTML = html;
+        }
+        
+        function refreshAPI() {
+            fetch('/refresh')
+                .then(response => response.json())
+                .then(data => {
+                    alert('数据已刷新');
+                    location.reload();
+                })
+                .catch(error => {
+                    console.error('错误:', error);
+                    alert('刷新失败');
+                });
+        }
+        
+        function formatBytes(bytes) {
+            const unit = 1024;
+            if (bytes < unit) {
+                return bytes + ' B';
+            }
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let exp = Math.min(Math.floor(Math.log(bytes) / Math.log(unit)), units.length-1);
+            const size = bytes / Math.pow(unit, exp);
+            return size.toFixed(2) + ' ' + units[exp];
+        }
+    </script>
+</body>
+</html>

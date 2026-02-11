@@ -1,0 +1,98 @@
+package config
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+// Config 存储配置信息
+type Config struct {
+	ClashHost     string
+	ClashSecret   string
+	ClashInterval int
+}
+
+// LoadConfig 从 config.ini 加载配置
+func LoadConfig() (*Config, error) {
+	config := &Config{
+		ClashHost:     "127.0.0.1:9090",
+		ClashSecret:   "",
+		ClashInterval: 1000,
+	}
+
+	// 检查配置文件是否存在
+	if _, err := os.Stat("config.ini"); os.IsNotExist(err) {
+		// 配置文件不存在，生成默认配置文件
+		return config, GenerateDefaultConfig(config)
+	}
+
+	file, err := os.Open("config.ini")
+	if err != nil {
+		return config, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var currentSection string
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// 跳过空行和注释
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		// 处理节名 [clash]
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			currentSection = strings.ToLower(strings.Trim(line, "[]"))
+			continue
+		}
+
+		// 处理键值对
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+
+			// 移除引号（如果存在）
+			value = strings.Trim(value, "\"'")
+
+			if currentSection == "clash" {
+				switch strings.ToLower(key) {
+				case "host":
+					config.ClashHost = value
+				case "secret":
+					config.ClashSecret = value
+				case "interval":
+					intVal, err := strconv.Atoi(value)
+					if err == nil {
+						config.ClashInterval = intVal
+					}
+				}
+			}
+		}
+	}
+
+	return config, scanner.Err()
+}
+
+// GenerateDefaultConfig 生成默认配置文件
+func GenerateDefaultConfig(config *Config) error {
+	content := `[clash]
+host = 127.0.0.1:9090
+secret = 
+interval = 1000
+`
+	
+	err := os.WriteFile("config.ini", []byte(content), 0644)
+	if err != nil {
+		return fmt.Errorf("生成默认配置文件失败: %v", err)
+	}
+	
+	fmt.Println("已生成默认配置文件 config.ini，请根据需要修改配置后重新启动程序")
+	return nil
+}
