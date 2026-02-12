@@ -93,6 +93,7 @@ type Metadata struct {
 // StatsEntry 表示统计条目
 type StatsEntry struct {
 	Target   string // host 或 destinationIP
+	SourceIP string // 源IP地址
 	Download int64
 	Upload   int64
 	Total    int64
@@ -518,6 +519,10 @@ func (d *Database) GetStats() ([]StatsEntry, error) {
 				WHEN destination_ip IS NOT NULL AND destination_ip != '' THEN destination_ip
 				ELSE 'Unknown'
 			END AS target,
+			CASE 
+				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+				ELSE 'Unknown'
+			END AS source_ip,
 			SUM(download) AS download,
 			SUM(upload) AS upload,
 			SUM(download + upload) AS total
@@ -528,9 +533,13 @@ func (d *Database) GetStats() ([]StatsEntry, error) {
 				WHEN host IS NOT NULL AND host != '' THEN host
 				WHEN destination_ip IS NOT NULL AND destination_ip != '' THEN destination_ip
 				ELSE 'Unknown'
+			END,
+			CASE 
+				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+				ELSE 'Unknown'
 			END
 		ORDER BY total DESC
-		LIMIT 100
+		LIMIT 200
 	`
 
 	rows, err := d.db.Query(query)
@@ -543,7 +552,7 @@ func (d *Database) GetStats() ([]StatsEntry, error) {
 	count := 0
 	for rows.Next() {
 		var entry StatsEntry
-		err := rows.Scan(&entry.Target, &entry.Download, &entry.Upload, &entry.Total)
+		err := rows.Scan(&entry.Target, &entry.SourceIP, &entry.Download, &entry.Upload, &entry.Total)
 		if err != nil {
 			return nil, err
 		}

@@ -13,32 +13,77 @@
         <span x-text="error"></span>
     </div>
     
-    <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
-        <table class="table table-zebra w-full">
-            <thead>
-                <tr>
-                    <th>排名</th>
-                    <th>Host/IP</th>
-                    <th>下载量</th>
-                    <th>上传量</th>
-                    <th>总计</th>
-                </tr>
-            </thead>
-            <tbody>
-                <template x-for="(item, index) in stats" :key="index">
-                    <tr class="hover">
-                        <td x-text="index + 1"></td>
-                        <td x-text="item.Target"></td>
-                        <td x-text="formatBytes(item.Download)"></td>
-                        <td x-text="formatBytes(item.Upload)"></td>
-                        <td x-text="formatBytes(item.Total)"></td>
+    <div x-show="!loading && !error" x-cloak>
+        <!-- 筛选区域 -->
+        <div class="mb-6 p-4 bg-base-100 rounded-lg shadow-sm">
+            <div class="space-y-4">
+                <div class="flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text">SourceIP 筛选</span>
+                    </label>
+                    <div class="relative">
+                        <select 
+                            class="select select-bordered w-full" 
+                            x-model="dropdownSourceIP"
+                            @change="addSourceIP"
+                        >
+                            <option value="">选择 SourceIP</option>
+                            <template x-for="sourceIP in availableSourceIPs" :key="sourceIP">
+                                <option :value="sourceIP" x-text="sourceIP"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- 筛选状态显示 -->
+                <div x-show="selectedSourceIPs.length > 0" class="flex items-center gap-2 flex-wrap">
+                    <template x-for="ip in selectedSourceIPs" :key="ip">
+                        <span class="badge badge-primary">
+                            <span x-text="ip"></span>
+                            <button @click="removeSourceIP(ip)" class="ml-1 text-sm hover:underline">×</button>
+                        </span>
+                    </template>
+                    <button @click="clearFilters" class="btn btn-sm btn-outline">
+                        清除筛选
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 筛选结果数量提示 -->
+        <div x-show="filteredStats.length !== stats.length" class="mb-4 text-sm text-muted">
+            <span x-text="filteredStats.length"></span> 条结果，共 <span x-text="stats.length"></span> 条记录
+        </div>
+        
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>Host/IP</th>
+                        <th>SourceIP</th>
+                        <th>下载量</th>
+                        <th>上传量</th>
+                        <th>总计</th>
                     </tr>
-                </template>
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    <template x-for="(item, index) in filteredStats" :key="index">
+                        <tr class="hover">
+                            <td x-text="index + 1"></td>
+                            <td x-text="item.Target"></td>
+                            <td x-text="item.SourceIP"></td>
+                            <td x-text="formatBytes(item.Download)"></td>
+                            <td x-text="formatBytes(item.Upload)"></td>
+                            <td x-text="formatBytes(item.Total)"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
     </div>
     
-    <div x-show="!loading && !error && stats.length === 0" class="text-center py-8" x-cloak>
+    <div x-show="!loading && !error && filteredStats.length === 0" class="text-center py-8" x-cloak>
         <div class="alert">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -52,13 +97,21 @@
     function hostStats() {
         return {
             stats: [],
+            filteredStats: [],
+            selectedSourceIPs: [],
+            uniqueSourceIPs: [],
+            dropdownSourceIP: '',
             loading: true,
             error: null,
+            
             loadStats() {
+                this.loading = true;
                 fetch('/api/stats')
                     .then(response => response.json())
                     .then(data => {
                         this.stats = data;
+                        this.filteredStats = data;
+                        this.extractUniqueSourceIPs();
                         this.loading = false;
                     })
                     .catch(error => {
@@ -66,6 +119,52 @@
                         this.error = '加载失败: ' + error.message;
                         this.loading = false;
                     });
+            },
+            
+            extractUniqueSourceIPs() {
+                const sourceIPSet = new Set();
+                this.stats.forEach(item => {
+                    if (item.SourceIP && item.SourceIP !== 'Unknown') {
+                        sourceIPSet.add(item.SourceIP);
+                    }
+                });
+                this.uniqueSourceIPs = Array.from(sourceIPSet).sort();
+            },
+            
+            get availableSourceIPs() {
+                return this.uniqueSourceIPs.filter(ip => !this.selectedSourceIPs.includes(ip));
+            },
+            
+            addSourceIP() {
+                if (this.dropdownSourceIP && !this.selectedSourceIPs.includes(this.dropdownSourceIP)) {
+                    this.selectedSourceIPs.push(this.dropdownSourceIP);
+                    this.dropdownSourceIP = '';
+                    this.filterStats();
+                }
+            },
+            
+            filterStats() {
+                if (this.selectedSourceIPs.length === 0) {
+                    this.filteredStats = this.stats;
+                } else {
+                    this.filteredStats = this.stats.filter(item => 
+                        this.selectedSourceIPs.includes(item.SourceIP)
+                    );
+                }
+            },
+            
+            removeSourceIP(ip) {
+                const index = this.selectedSourceIPs.indexOf(ip);
+                if (index > -1) {
+                    this.selectedSourceIPs.splice(index, 1);
+                    this.filterStats();
+                }
+            },
+            
+            clearFilters() {
+                this.selectedSourceIPs = [];
+                this.dropdownSourceIP = '';
+                this.filteredStats = this.stats;
             }
         }
     }
