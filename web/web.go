@@ -161,13 +161,12 @@ func (s *Server) periodicallyRefreshData() {
 			// 检查哪些连接在数据库中存在但当前不在活跃列表中，这些连接已经关闭
 			for _, connID := range openConnections {
 				if !currentActive[connID] {
-					// 连接已关闭，将最后一次更新的时间作为关闭时间
-					closedTime := time.Now().Format("2006-01-02 15:04:05")
-					err := s.db.SetConnectionClosedTime(connID, closedTime)
+					// 连接已关闭，更新 end_timestamp
+					err := s.db.SetConnectionClosedTime(connID)
 					if err != nil {
 						log.Error("设置连接关闭时间失败: %v\n", err)
 					} else {
-						log.Info("连接 %s 已关闭，关闭时间: %s\n", connID, closedTime)
+						log.Info("连接 %s 已关闭\n", connID)
 					}
 				}
 			}
@@ -188,7 +187,6 @@ func (s *Server) periodicallyRefreshData() {
 				DestPort:          conn.DestPort,
 				DestIP:            conn.DestIP,
 				StartTime:         conn.StartTime,
-				ClosedTime:        conn.ClosedTime,
 				Network:           conn.Network,
 				ConnectionType:    conn.ConnectionType,
 				SourceIPAddr:      conn.SourceIPAddr,
@@ -305,7 +303,6 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 			DestPort:          conn.DestPort,
 			DestIP:            conn.DestIP,
 			StartTime:         conn.StartTime,
-			ClosedTime:        conn.ClosedTime,
 			Network:           conn.Network,
 			ConnectionType:    conn.ConnectionType,
 			SourceIPAddr:      conn.SourceIPAddr,

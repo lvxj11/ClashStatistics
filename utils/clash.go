@@ -32,8 +32,7 @@ type Connection struct {
 	DestPort    string   `json:"dstPort"`
 	DestIP      string   `json:"dstIP"`
 	StartTime   string   `json:"start"`
-	ClosedTime  string   `json:"closed,omitempty"` // 连接关闭时间
-	Metadata    Metadata `json:"metadata"`         // 保留原始结构用于解析
+	Metadata    Metadata `json:"metadata"` // 保留原始结构用于解析
 	// 从 Metadata 展开的字段（用于数据库存储）
 	Network           string      `json:"-"` // 不从 JSON 解析，而是从 Metadata 映射
 	ConnectionType    string      `json:"-"` // 避免与 Go 关键字冲突
