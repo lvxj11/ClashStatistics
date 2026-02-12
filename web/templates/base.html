@@ -4,9 +4,9 @@
     <title>{{.Title}} - Clash Statistics Dashboard</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
         
@@ -42,9 +42,9 @@
         }
     </style>
 </head>
-<body class="min-h-screen bg-base-200">
+<body class="min-h-screen">
     <div class="min-h-screen flex flex-col">
-        <div class="navbar bg-base-100 shadow-lg">
+        <div class="navbar shadow-lg">
             <div class="flex-1">
                 <a href="/" class="btn btn-ghost text-xl">Clash Statistics Dashboard</a>
             </div>
@@ -54,7 +54,7 @@
             </div>
         </div>
         
-        <div class="tabs tabs-boxed bg-base-300 mx-4 mt-4 justify-center">
+        <div class="tabs tabs-boxed mx-4 mt-4 justify-center">
             <a href="/host-stats" class="tab {{if eq .CurrentPage "host-stats"}}tab-active{{end}}">
                 Host/IP 统计
             </a>
@@ -70,7 +70,7 @@
             {{template "content" .}}
         </main>
         
-        <footer class="footer footer-center p-4 bg-base-300 text-base-content">
+        <footer class="footer footer-center p-4 text-base-content">
             <aside>
                 <p>Clash Statistics Dashboard &copy; 2024</p>
             </aside>
