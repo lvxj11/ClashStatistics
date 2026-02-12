@@ -102,7 +102,7 @@ type StatsEntry struct {
 // GanttEntry 表示甘特图条目
 type GanttEntry struct {
 	SourceIP  string
-	TimeSlots [144]bool // 每天144个10分钟时间段，true表示该时间段有活动
+	TimeSlots [144]int // 每天144个10分钟时间段，存储活动连接数
 }
 
 // parseToTimestamp 将时间字符串转换为 Unix 时间戳
@@ -626,7 +626,7 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 	defer rows.Close()
 
 	// 按sourceIP组织数据
-	ganttData := make(map[string][144]bool)
+	ganttData := make(map[string][144]int)
 
 	for rows.Next() {
 		var sourceIP string
@@ -664,7 +664,7 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 			// 只有当连接开始时间早于时间段结束时间 且 连接结束时间晚于时间段开始时间时，才认为在该时间段内活跃
 			if (startTimeParsed.Before(utcSlotEnd) || startTimeParsed.Equal(utcSlotEnd)) &&
 				(endTimeParsed.After(utcSlotBegin) || endTimeParsed.Equal(utcSlotBegin)) {
-				timeSlots[i] = true
+				timeSlots[i]++ // 增加连接数计数
 			}
 		}
 
