@@ -5,6 +5,11 @@
     <div class="mb-6 flex flex-wrap items-center gap-4">
         <label for="date" class="font-medium">选择日期:</label>
         <input type="date" id="date" x-model="selectedDate" @change="loadGanttChart()" class="input input-bordered w-auto" />
+        <div class="text-sm text-gray-600">
+            <span class="font-medium">时区:</span>
+            <span>{{.TimeZoneOffset}}</span>
+            <span class="text-xs ml-1">({{.TimeZoneName}})</span>
+        </div>
     </div>
     
     <div x-show="loading" class="flex justify-center py-8">
@@ -19,20 +24,45 @@
     </div>
     
     <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
-        <div id="gantt-chart" class="gantt-container">
-            <div class="flex items-center mb-1">
+        <div class="gantt-container space-y-2">
+            <!-- 时间轴 -->
+            <div class="flex items-center">
                 <div class="w-[200px] flex-shrink-0"></div>
-                <template x-for="(segment, index) in 144" :key="index">
-                    <div class="w-[15px] text-center text-[10px]" x-text="(index % 6 === 0) ? Math.floor(index / 6) : (index % 3 === 0 ? '|' : '')"></div>
-                </template>
+                <div class="flex-1 relative">
+                    <!-- 时间轴背景线 -->
+                    <div class="absolute inset-0 flex items-center">
+                        <div class="h-px bg-gray-600 w-full"></div>
+                    </div>
+                    <!-- 小时标记 -->
+                    <div class="relative flex w-full">
+                        <template x-for="hour in 24" :key="hour">
+                            <div class="flex flex-col items-start flex-shrink-0" :style="{ width: (100 / 24) + '%' }">
+                                <div class="text-xs font-medium text-gray-600 mb-1" x-text="formatHour(hour - 1)"></div>
+                                <div class="w-px h-2 bg-gray-500"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
             </div>
             
+            <!-- 甘特图条目 -->
             <template x-for="(item, itemIndex) in ganttData" :key="itemIndex">
-                <div class="flex items-center mb-1">
-                    <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0" x-text="item.SourceIP || 'Unknown'" :title="item.SourceIP || 'Unknown'"></div>
-                    <template x-for="(slot, slotIndex) in 144" :key="slotIndex">
-                        <div class="gantt-cell" :class="slotIndex < item.TimeSlots.length && item.TimeSlots[slotIndex] ? 'gantt-cell-active' : ''"></div>
-                    </template>
+                <div class="flex items-center">
+                    <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium" 
+                         x-text="item.SourceIP || 'Unknown'" 
+                         :title="item.SourceIP || 'Unknown'"></div>
+                    <div class="flex-1 h-4 bg-gray-800 rounded-full overflow-hidden relative group">
+                        <!-- 连续的活动时间段 -->
+                        <div class="absolute inset-0 flex">
+                            <template x-for="(slot, slotIndex) in 144" :key="slotIndex">
+                                <div class="flex-1 h-full" 
+                                     :class="slotIndex < item.TimeSlots.length && item.TimeSlots[slotIndex] ? 'bg-green-500' : 'bg-transparent'"></div>
+                            </template>
+                        </div>
+                        <!-- 悬停提示 -->
+                        <div class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-50 flex items-center justify-center text-white text-xs rounded-full"
+                             x-text="getActiveTime(item.TimeSlots)"></div>
+                    </div>
                 </div>
             </template>
         </div>
@@ -74,6 +104,16 @@
                         this.error = '加载甘特图失败: ' + error.message;
                         this.loading = false;
                     });
+            },
+            formatHour(hour) {
+                return String(hour).padStart(2, '0') + ':00';
+            },
+            getActiveTime(timeSlots) {
+                const activeSlots = timeSlots.filter(slot => slot).length;
+                const activeMinutes = activeSlots * 10;
+                const hours = Math.floor(activeMinutes / 60);
+                const minutes = activeMinutes % 60;
+                return `在线时间: ${hours}h ${minutes}m`;
             }
         }
     }

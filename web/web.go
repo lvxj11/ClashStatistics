@@ -3,6 +3,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"time"
@@ -363,14 +364,31 @@ func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTe
 		return
 	}
 
+	// 获取本地时区信息
+	localLoc := time.Now().Location()
+	timeZoneName := localLoc.String()
+
+	// 计算时区偏移
+	_, offset := time.Now().Zone()
+	offsetHours := offset / 3600
+	offsetMinutes := (offset % 3600) / 60
+	timeZoneOffset := fmt.Sprintf("GMT%+d", offsetHours)
+	if offsetMinutes != 0 {
+		timeZoneOffset = fmt.Sprintf("GMT%+d:%02d", offsetHours, offsetMinutes)
+	}
+
 	data := struct {
-		Title       string
-		CurrentPage string
-		CurrentDate string
+		Title          string
+		CurrentPage    string
+		CurrentDate    string
+		TimeZoneName   string
+		TimeZoneOffset string
 	}{
-		Title:       title,
-		CurrentPage: currentPage,
-		CurrentDate: time.Now().Format("2006-01-02"),
+		Title:          title,
+		CurrentPage:    currentPage,
+		CurrentDate:    time.Now().Format("2006-01-02"),
+		TimeZoneName:   timeZoneName,
+		TimeZoneOffset: timeZoneOffset,
 	}
 
 	err = tmpl.Execute(w, data)

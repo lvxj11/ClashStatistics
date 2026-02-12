@@ -111,6 +111,8 @@ func parseToTimestamp(timeStr string) (int64, error) {
 		return 0, nil
 	}
 
+	localLoc := time.Now().Location()
+
 	// 尝试 ISO 8601 格式 (RFC3339)
 	if t, err := time.Parse(time.RFC3339, timeStr); err == nil {
 		return t.Unix(), nil
@@ -121,8 +123,8 @@ func parseToTimestamp(timeStr string) (int64, error) {
 		return t.Unix(), nil
 	}
 
-	// 尝试旧格式（向后兼容）
-	if t, err := time.Parse("2006-01-02 15:04:05", timeStr); err == nil {
+	// 尝试旧格式（向后兼容）- 使用本地时区
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", timeStr, localLoc); err == nil {
 		return t.Unix(), nil
 	}
 
@@ -599,8 +601,9 @@ func (d *Database) GetSourceIPStats() ([]StatsEntry, error) {
 
 // GetGanttData 获取甘特图数据
 func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
-	// 计算日期范围的时间戳
-	dateStart, err := time.Parse("2006-01-02", date)
+	// 计算日期范围的时间戳（使用本地时区）
+	localLoc := time.Now().Location()
+	dateStart, err := time.ParseInLocation("2006-01-02", date, localLoc)
 	if err != nil {
 		return nil, fmt.Errorf("解析日期失败: %v", err)
 	}
@@ -634,28 +637,33 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 			return nil, err
 		}
 
-		// 使用时间戳直接转换为 time.Time（无需字符串解析）
+		// 使用本地时区转换时间戳
 		startTimeParsed := time.Unix(startTimestamp, 0)
 		endTimeParsed := time.Unix(endTimestamp, 0)
 
 		// 如果 end_timestamp 为 0，使用当前时间
 		if endTimestamp == 0 {
-			endTimeParsed = time.Now()
+			endTimeParsed = time.Now().In(time.UTC)
 		}
 
 		// 获取或创建时间槽
 		timeSlots := ganttData[sourceIP]
 
-		// 计算从开始时间到结束时间之间的所有10分钟时间段
-		slotStart := time.Date(startTimeParsed.Year(), startTimeParsed.Month(), startTimeParsed.Day(), 0, 0, 0, 0, startTimeParsed.Location())
+		// 基于本地时间计算时间槽
+		// 遍历所有144个时间槽（每天144个10分钟时间段）
 		for i := 0; i < 144; i++ {
-			slotBegin := slotStart.Add(time.Duration(i*10) * time.Minute)
+			// 计算当前时间槽的本地时间范围
+			slotBegin := dateStart.Add(time.Duration(i*10) * time.Minute)
 			slotEnd := slotBegin.Add(10 * time.Minute)
+
+			// 将本地时间槽转换为 UTC 时间，用于与数据库中的 UTC 时间进行比较
+			utcSlotBegin := slotBegin.In(time.UTC)
+			utcSlotEnd := slotEnd.In(time.UTC)
 
 			// 检查连接是否在这个时间段内活跃
 			// 只有当连接开始时间早于时间段结束时间 且 连接结束时间晚于时间段开始时间时，才认为在该时间段内活跃
-			if (startTimeParsed.Before(slotEnd) || startTimeParsed.Equal(slotEnd)) &&
-				(endTimeParsed.After(slotBegin) || endTimeParsed.Equal(slotBegin)) {
+			if (startTimeParsed.Before(utcSlotEnd) || startTimeParsed.Equal(utcSlotEnd)) &&
+				(endTimeParsed.After(utcSlotBegin) || endTimeParsed.Equal(utcSlotBegin)) {
 				timeSlots[i] = true
 			}
 		}
