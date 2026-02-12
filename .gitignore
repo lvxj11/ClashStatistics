@@ -28,6 +28,7 @@ vendor/
 # IDE 配置文件
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
 *~
