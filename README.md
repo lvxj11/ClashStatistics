@@ -24,7 +24,7 @@
 - `secret`: Clash API 认证密钥，默认为空
 - `interval`: 数据刷新间隔（毫秒），默认为 `1000`
 - `web_port`: Web 服务器端口，默认为 `8080`
-- `log_level`: 日志级别，默认为 `info`
+- `log_level`: 日志级别，默认为 `warn`
 - `db_cleanup_days`: 数据库清理天数，默认为 `7`
 - `db_vacuum_interval`: 数据库 vacuum 间隔（小时），默认为 `24`
 
