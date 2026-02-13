@@ -28,7 +28,7 @@
             <!-- 时间轴 -->
             <div class="flex items-center">
                 <div class="w-[200px] flex-shrink-0"></div>
-                <div class="flex-1 relative">
+                <div class="flex-1 relative min-w-[600px]">
                     <!-- 时间轴背景线 -->
                     <div class="absolute inset-0 flex items-center">
                         <div class="h-px bg-gray-600 w-full"></div>
@@ -51,7 +51,7 @@
                     <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium" 
                          x-text="item.SourceIP || 'Unknown'" 
                          :title="item.SourceIP || 'Unknown'"></div>
-                    <div class="flex-1 h-4 bg-gray-800 rounded-full overflow-hidden relative group">
+                    <div class="flex-1 min-w-[600px] h-4 bg-gray-800 rounded-full overflow-hidden relative group">
                         <!-- 连续的活动时间段 -->
                         <div class="absolute inset-0 flex">
                             <template x-for="(slot, slotIndex) in 144" :key="slotIndex">
@@ -106,7 +106,7 @@
                     });
             },
             formatHour(hour) {
-                return String(hour).padStart(2, '0') + ':00';
+                return String(hour).padStart(2, '0');
             },
             getActiveTime(timeSlots) {
                 const activeSlots = timeSlots.filter(slot => slot > 0).length;

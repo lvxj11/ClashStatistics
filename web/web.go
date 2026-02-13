@@ -179,6 +179,7 @@ func (s *Server) periodicallyRefreshData() {
 			dbConnections[i] = database.Connection{
 				ID:                conn.ID,
 				Chain:             conn.Chain,
+				Chains:            conn.Chains,
 				Rule:              conn.Rule,
 				RulePayload:       conn.RulePayload,
 				Download:          conn.Download,
@@ -295,6 +296,7 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 		dbConnections[i] = database.Connection{
 			ID:                conn.ID,
 			Chain:             conn.Chain,
+			Chains:            conn.Chains,
 			Rule:              conn.Rule,
 			RulePayload:       conn.RulePayload,
 			Download:          conn.Download,

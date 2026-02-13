@@ -23,6 +23,7 @@ type Database struct {
 type Connection struct {
 	ID             string   `json:"id"`
 	Chain          []string `json:"chain"`
+	Chains         []string `json:"chains"` // 存储原始chains数据
 	Rule           string   `json:"rule"`
 	RulePayload    string   `json:"rulePayload"`
 	Download       int64    `json:"download"`
@@ -146,45 +147,46 @@ func InitDB() (*Database, error) {
 	// 创建表
 	sqlStmt := `
 	CREATE TABLE IF NOT EXISTS connections (
-		id TEXT PRIMARY KEY,
-		network TEXT,
-		type TEXT,
-		source_ip TEXT,
-		destination_ip TEXT,
-		source_port TEXT,
-		destination_port TEXT,
-		host TEXT,
-		dns_mode TEXT,
-		uid INTEGER,
-		process TEXT,
-		process_path TEXT,
-		special_proxy TEXT,
-		special_rules TEXT,
-		remote_destination TEXT,
-		dscp INTEGER,
-		sniff_host TEXT,
-		inbound_ip TEXT,
-		inbound_port TEXT,
-		inbound_name TEXT,
-		inbound_user TEXT,
-		source_geoip TEXT,
-		destination_geoip TEXT,
-		source_ipasn TEXT,
-		destination_ipasn TEXT,
-		upload INTEGER,
-		download INTEGER,
-		start_time TEXT,
-		start_timestamp INTEGER DEFAULT 0,
-		end_timestamp INTEGER DEFAULT 0,
-		chain TEXT,
-		rule TEXT,
-		rule_payload TEXT,
-		source_real_ip TEXT,
-		source_real_port TEXT,
-		dest_real_ip TEXT,
-		dest_real_port TEXT,
-		last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
+			id TEXT PRIMARY KEY,
+			network TEXT,
+			type TEXT,
+			source_ip TEXT,
+			destination_ip TEXT,
+			source_port TEXT,
+			destination_port TEXT,
+			host TEXT,
+			dns_mode TEXT,
+			uid INTEGER,
+			process TEXT,
+			process_path TEXT,
+			special_proxy TEXT,
+			special_rules TEXT,
+			remote_destination TEXT,
+			dscp INTEGER,
+			sniff_host TEXT,
+			inbound_ip TEXT,
+			inbound_port TEXT,
+			inbound_name TEXT,
+			inbound_user TEXT,
+			source_geoip TEXT,
+			destination_geoip TEXT,
+			source_ipasn TEXT,
+			destination_ipasn TEXT,
+			upload INTEGER,
+			download INTEGER,
+			start_time TEXT,
+			start_timestamp INTEGER DEFAULT 0,
+			end_timestamp INTEGER DEFAULT 0,
+			chain TEXT,
+			chains TEXT,
+			rule TEXT,
+			rule_payload TEXT,
+			source_real_ip TEXT,
+			source_real_port TEXT,
+			dest_real_ip TEXT,
+			dest_real_port TEXT,
+			last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	
 	-- 创建索引
 	CREATE INDEX IF NOT EXISTS idx_connections_host ON connections(host);
@@ -266,6 +268,22 @@ func (d *Database) Migrate() {
 		log.Info("数据库迁移完成\n")
 	}
 
+	// 检查 chains 字段是否存在
+	var chainsCount int
+	err = d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='chains'").Scan(&chainsCount)
+	if err == nil && chainsCount == 0 {
+		log.Info("开始数据库迁移：添加 chains 字段\n")
+
+		// 添加 chains 字段
+		_, err := d.db.Exec("ALTER TABLE connections ADD COLUMN chains TEXT")
+		if err != nil {
+			log.Error("添加 chains 字段失败: %v\n", err)
+			return
+		}
+
+		log.Info("成功添加 chains 字段\n")
+	}
+
 	// 检查是否需要删除 closed_time 字段
 	var closedTimeCount int
 	d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='closed_time'").Scan(&closedTimeCount)
@@ -307,6 +325,7 @@ func (d *Database) Migrate() {
 				start_timestamp INTEGER DEFAULT 0,
 				end_timestamp INTEGER DEFAULT 0,
 				chain TEXT,
+				chains TEXT,
 				rule TEXT,
 				rule_payload TEXT,
 				source_real_ip TEXT,
@@ -328,14 +347,14 @@ func (d *Database) Migrate() {
 				host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
 				remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
 				inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-				upload, download, start_time, start_timestamp, end_timestamp, chain, rule, rule_payload, source_real_ip, 
+				upload, download, start_time, start_timestamp, end_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
 				source_real_port, dest_real_ip, dest_real_port, last_seen
 			) SELECT 
 				id, network, type, source_ip, destination_ip, source_port, destination_port, 
 				host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
 				remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
 				inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-				upload, download, start_time, start_timestamp, end_timestamp, chain, rule, rule_payload, source_real_ip, 
+				upload, download, start_time, start_timestamp, end_timestamp, chain, '', rule, rule_payload, source_real_ip, 
 				source_real_port, dest_real_ip, dest_real_port, last_seen
 			FROM connections
 		`)
@@ -395,6 +414,11 @@ func (d *Database) SaveConnection(conn Connection) error {
 		chainStr = strings.Join(conn.Chain, ",")
 	}
 
+	chainsStr := ""
+	if len(conn.Chains) > 0 {
+		chainsStr = strings.Join(conn.Chains, ",")
+	}
+
 	// 解析 start_time 为时间戳（只在第一次产生）
 	startTimestamp := conn.StartTimestamp
 	if startTimestamp == 0 && conn.StartTime != "" {
@@ -413,9 +437,9 @@ func (d *Database) SaveConnection(conn Connection) error {
 		host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
 		remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
 		inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-		upload, download, start_time, start_timestamp, end_timestamp, chain, rule, rule_payload, source_real_ip, 
+		upload, download, start_time, start_timestamp, end_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
 		source_real_port, dest_real_ip, dest_real_port, last_seen
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -438,7 +462,7 @@ func (d *Database) SaveConnection(conn Connection) error {
 		conn.RemoteDestination, conn.DSCP, conn.SniffHost, conn.InboundIP, conn.InboundPort,
 		conn.InboundName, conn.InboundUser, sourceGeoIPStr, destinationGeoIPStr,
 		conn.SourceIPASN, conn.DestinationIPASN, conn.Upload, conn.Download,
-		conn.StartTime, startTimestamp, endTimestamp, chainStr, conn.Rule, conn.RulePayload, conn.SourceIP, conn.SourcePort,
+		conn.StartTime, startTimestamp, endTimestamp, chainStr, chainsStr, conn.Rule, conn.RulePayload, conn.SourceIP, conn.SourcePort,
 		conn.DestIP, conn.DestPort, time.Now().Format("2006-01-02 15:04:05"),
 	)
 	return err
@@ -457,9 +481,9 @@ func (d *Database) SaveConnections(connections []Connection) error {
 		host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
 		remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
 		inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-		upload, download, start_time, start_timestamp, end_timestamp, chain, rule, rule_payload, source_real_ip, 
+		upload, download, start_time, start_timestamp, end_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
 		source_real_port, dest_real_ip, dest_real_port, last_seen
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -469,6 +493,11 @@ func (d *Database) SaveConnections(connections []Connection) error {
 		chainStr := ""
 		if len(conn.Chain) > 0 {
 			chainStr = strings.Join(conn.Chain, ",")
+		}
+
+		chainsStr := ""
+		if len(conn.Chains) > 0 {
+			chainsStr = strings.Join(conn.Chains, ",")
 		}
 
 		// 解析 start_time 为时间戳（只在第一次产生）
@@ -501,7 +530,7 @@ func (d *Database) SaveConnections(connections []Connection) error {
 			conn.RemoteDestination, conn.DSCP, conn.SniffHost, conn.InboundIP, conn.InboundPort,
 			conn.InboundName, conn.InboundUser, sourceGeoIPStr, destinationGeoIPStr,
 			conn.SourceIPASN, conn.DestinationIPASN, conn.Upload, conn.Download,
-			conn.StartTime, startTimestamp, endTimestamp, chainStr, conn.Rule, conn.RulePayload, conn.SourceIP, conn.SourcePort,
+			conn.StartTime, startTimestamp, endTimestamp, chainStr, chainsStr, conn.Rule, conn.RulePayload, conn.SourceIP, conn.SourcePort,
 			conn.DestIP, conn.DestPort, time.Now().Format("2006-01-02 15:04:05"),
 		)
 		if err != nil {

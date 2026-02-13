@@ -22,7 +22,8 @@ type ConnectionInfo struct {
 // Connection 表示单个连接
 type Connection struct {
 	ID          string   `json:"id"`
-	Chain       []string `json:"chain"`
+	Chain       []string `json:"-"`      // 不再直接从JSON解析，而是从Chains处理
+	Chains      []string `json:"chains"` // 存储原始chains数据
 	Rule        string   `json:"rule"`
 	RulePayload string   `json:"rulePayload"`
 	Download    int64    `json:"download"`
@@ -224,6 +225,11 @@ func GetConnectionsFromClash(clashHost, clashSecret string, clashInterval int) (
 				conn.DestinationGeoIP = conn.Metadata.DestinationGeoIP
 				conn.SourceIPASN = conn.Metadata.SourceIPASN
 				conn.DestinationIPASN = conn.Metadata.DestinationIPASN
+
+				// 处理Chains字段：将第一个元素存入Chain
+				if len(conn.Chains) > 0 {
+					conn.Chain = []string{conn.Chains[0]}
+				}
 
 				// 如果 metadata 中的 sourceIP 为空，尝试使用连接本身的 srcIP 字段
 				if conn.SourceIPAddr == "" {
