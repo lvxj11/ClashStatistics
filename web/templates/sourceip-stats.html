@@ -13,32 +13,97 @@
         <span x-text="error"></span>
     </div>
     
-    <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
-        <table class="table table-zebra w-full">
-            <thead>
-                <tr>
-                    <th>排名</th>
-                    <th>SourceIP</th>
-                    <th>下载量</th>
-                    <th>上传量</th>
-                    <th>总计</th>
-                </tr>
-            </thead>
-            <tbody>
-                <template x-for="(item, index) in stats" :key="index">
-                    <tr class="hover">
-                        <td x-text="index + 1"></td>
-                        <td x-text="item.Target"></td>
-                        <td x-text="formatBytes(item.Download)"></td>
-                        <td x-text="formatBytes(item.Upload)"></td>
-                        <td x-text="formatBytes(item.Total)"></td>
+    <div x-show="!loading && !error" x-cloak>
+        <!-- 筛选区域 -->
+        <div class="mb-6 p-4 bg-base-100 rounded-lg shadow-sm">
+            <div class="flex-1 min-w-[200px]">
+                <label class="label">
+                    <span class="label-text">Chain 筛选</span>
+                </label>
+                <div class="relative" x-data="{ isOpen: false }">
+                    <button 
+                        @click="isOpen = !isOpen"
+                        @click.outside="isOpen = false"
+                        class="select select-bordered w-full text-left"
+                    >
+                        <span x-text="selectedChains.length > 0 ? `已选 ${selectedChains.length} 项` : '选择 Chain'"></span>
+                    </button>
+                    
+                    <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                        <div class="p-2">
+                            <label 
+                                class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
+                                @click.stop="toggleAllChains"
+                            >
+                                <div class="flex items-center justify-center w-5 h-5 border rounded"
+                                     :class="isAllChainsSelected ? 'bg-primary border-primary' : 'border-gray-400'">
+                                    <svg x-show="isAllChainsSelected" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                </div>
+                                <span class="text-sm font-medium">全选</span>
+                            </label>
+                            <template x-for="chain in uniqueChains" :key="chain">
+                                <label 
+                                    class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
+                                    @click.stop="toggleChain(chain)"
+                                >
+                                    <div class="flex items-center justify-center w-5 h-5 border rounded"
+                                         :class="selectedChains.includes(chain) ? 'bg-primary border-primary' : 'border-gray-400'">
+                                        <svg x-show="selectedChains.includes(chain)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                    <span class="text-sm" x-text="chain"></span>
+                                </label>
+                            </template>
+                            <template x-if="uniqueChains.length === 0">
+                                <div class="p-2 text-sm text-gray-500">暂无可用选项</div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div x-show="selectedChains.length > 0" class="flex items-center gap-2 mt-4">
+                <button @click="clearFilters" class="btn btn-sm btn-outline">
+                    清除筛选
+                </button>
+            </div>
+        </div>
+        
+        <!-- 筛选结果数量提示 -->
+        <div x-show="filteredStats.length !== stats.length" class="mb-4 text-sm text-muted">
+            <span x-text="filteredStats.length"></span> 条结果，共 <span x-text="stats.length"></span> 条记录
+        </div>
+        
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>SourceIP</th>
+                        <th>下载量</th>
+                        <th>上传量</th>
+                        <th>总计</th>
                     </tr>
-                </template>
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    <template x-for="(item, index) in filteredStats" :key="index">
+                        <tr class="hover">
+                            <td x-text="index + 1"></td>
+                            <td x-text="item.Target"></td>
+                            <td x-text="formatBytes(item.Download)"></td>
+                            <td x-text="formatBytes(item.Upload)"></td>
+                            <td x-text="formatBytes(item.Total)"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
     </div>
     
-    <div x-show="!loading && !error && stats.length === 0" class="text-center py-8" x-cloak>
+    <div x-show="!loading && !error && filteredStats.length === 0" class="text-center py-8" x-cloak>
         <div class="alert">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -52,20 +117,108 @@
     function sourceIPStats() {
         return {
             stats: [],
+            filteredStats: [],
+            selectedChains: [],
+            uniqueChains: [],
             loading: true,
             error: null,
+            
+            get isAllChainsSelected() {
+                return this.uniqueChains.length > 0 && 
+                       this.selectedChains.length === this.uniqueChains.length;
+            },
+            
             loadSourceIPStats() {
-                fetch('/api/sourceip-stats')
+                this.loading = true;
+                fetch('/api/stats')
                     .then(response => response.json())
                     .then(data => {
-                        this.stats = data;
+                        this.stats = this.calculateSourceIPStats(data);
+                        this.filteredStats = this.stats;
+                        this.extractUniqueChains(data);
                         this.loading = false;
                     })
                     .catch(error => {
-                        console.error('加载SourceIP统计失败:', error);
+                        console.error('加载统计失败:', error);
                         this.error = '加载失败: ' + error.message;
                         this.loading = false;
                     });
+            },
+            
+            calculateSourceIPStats(rawData) {
+                const sourceIPMap = new Map();
+                
+                rawData.forEach(item => {
+                    if (item.SourceIP && item.SourceIP !== 'Unknown') {
+                        if (!sourceIPMap.has(item.SourceIP)) {
+                            sourceIPMap.set(item.SourceIP, {
+                                Target: item.SourceIP,
+                                Download: 0,
+                                Upload: 0,
+                                Total: 0
+                            });
+                        }
+                        
+                        const sourceIPData = sourceIPMap.get(item.SourceIP);
+                        sourceIPData.Download += item.Download;
+                        sourceIPData.Upload += item.Upload;
+                        sourceIPData.Total += item.Total;
+                    }
+                });
+                
+                return Array.from(sourceIPMap.values())
+                    .sort((a, b) => b.Total - a.Total)
+                    .slice(0, 100);
+            },
+            
+            extractUniqueChains(rawData) {
+                const chainSet = new Set();
+                rawData.forEach(item => {
+                    if (item.Chain && item.Chain !== 'Unknown') {
+                        chainSet.add(item.Chain);
+                    }
+                });
+                this.uniqueChains = Array.from(chainSet).sort();
+            },
+            
+            toggleAllChains() {
+                if (this.isAllChainsSelected) {
+                    this.selectedChains = [];
+                } else {
+                    this.selectedChains = [...this.uniqueChains];
+                }
+                this.filterStats();
+            },
+            
+            toggleChain(chain) {
+                const index = this.selectedChains.indexOf(chain);
+                if (index > -1) {
+                    this.selectedChains.splice(index, 1);
+                } else {
+                    this.selectedChains.push(chain);
+                }
+                this.filterStats();
+            },
+            
+            filterStats() {
+                if (this.selectedChains.length === 0) {
+                    this.filteredStats = this.stats;
+                } else {
+                    // 重新从原始数据计算，只包含选中的Chain
+                    fetch('/api/stats')
+                        .then(response => response.json())
+                        .then(data => {
+                            const filteredData = data.filter(item => 
+                                this.selectedChains.includes(item.Chain)
+                            );
+                            this.filteredStats = this.calculateSourceIPStats(filteredData);
+                        });
+                }
+            },
+            
+            clearFilters() {
+                this.selectedChains = [];
+                this.filteredStats = this.stats;
             }
         }
     }

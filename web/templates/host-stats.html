@@ -16,7 +16,7 @@
     <div x-show="!loading && !error" x-cloak>
         <!-- 筛选区域 -->
         <div class="mb-6 p-4 bg-base-100 rounded-lg shadow-sm">
-            <div class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="flex-1 min-w-[200px]">
                     <label class="label">
                         <span class="label-text">SourceIP 筛选</span>
@@ -25,22 +25,16 @@
                         <button 
                             @click="isOpen = !isOpen"
                             @click.outside="isOpen = false"
-                            class="select select-bordered w-full text-left flex items-center justify-between"
+                            class="select select-bordered w-full text-left"
                         >
                             <span x-text="selectedSourceIPs.length > 0 ? `已选 ${selectedSourceIPs.length} 项` : '选择 SourceIP'"></span>
-                            <svg x-show="!isOpen" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                            </svg>
-                            <svg x-show="isOpen" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
-                            </svg>
                         </button>
                         
                         <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
                             <div class="p-2">
                                 <label 
                                     class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
-                                    @click="toggleAll"
+                                    @click.stop="toggleAll"
                                 >
                                     <div class="flex items-center justify-center w-5 h-5 border rounded"
                                          :class="isAllSelected ? 'bg-primary border-primary' : 'border-gray-400'">
@@ -53,7 +47,7 @@
                                 <template x-for="sourceIP in uniqueSourceIPs" :key="sourceIP">
                                     <label 
                                         class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
-                                        @click="toggleSourceIP(sourceIP)"
+                                        @click.stop="toggleSourceIP(sourceIP)"
                                     >
                                         <div class="flex items-center justify-center w-5 h-5 border rounded"
                                              :class="selectedSourceIPs.includes(sourceIP) ? 'bg-primary border-primary' : 'border-gray-400'">
@@ -72,11 +66,60 @@
                     </div>
                 </div>
                 
-                <div x-show="selectedSourceIPs.length > 0" class="flex items-center gap-2">
-                    <button @click="clearFilters" class="btn btn-sm btn-outline">
-                        清除筛选
-                    </button>
+                <div class="flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text">Chain 筛选</span>
+                    </label>
+                    <div class="relative" x-data="{ isOpen: false }">
+                        <button 
+                            @click="isOpen = !isOpen"
+                            @click.outside="isOpen = false"
+                            class="select select-bordered w-full text-left"
+                        >
+                            <span x-text="selectedChains.length > 0 ? `已选 ${selectedChains.length} 项` : '选择 Chain'"></span>
+                        </button>
+                        
+                        <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            <div class="p-2">
+                                <label 
+                                    class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
+                                    @click.stop="toggleAllChains"
+                                >
+                                    <div class="flex items-center justify-center w-5 h-5 border rounded"
+                                         :class="isAllChainsSelected ? 'bg-primary border-primary' : 'border-gray-400'">
+                                        <svg x-show="isAllChainsSelected" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                    <span class="text-sm font-medium">全选</span>
+                                </label>
+                                <template x-for="chain in uniqueChains" :key="chain">
+                                    <label 
+                                        class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
+                                        @click.stop="toggleChain(chain)"
+                                    >
+                                        <div class="flex items-center justify-center w-5 h-5 border rounded"
+                                             :class="selectedChains.includes(chain) ? 'bg-primary border-primary' : 'border-gray-400'">
+                                            <svg x-show="selectedChains.includes(chain)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                            </svg>
+                                        </div>
+                                        <span class="text-sm" x-text="chain"></span>
+                                    </label>
+                                </template>
+                                <template x-if="uniqueChains.length === 0">
+                                    <div class="p-2 text-sm text-gray-500">暂无可用选项</div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+            </div>
+            
+            <div x-show="selectedSourceIPs.length > 0 || selectedChains.length > 0" class="flex items-center gap-2 mt-4">
+                <button @click="clearFilters" class="btn btn-sm btn-outline">
+                    清除筛选
+                </button>
             </div>
         </div>
         
@@ -92,6 +135,7 @@
                         <th>排名</th>
                         <th>Host/IP</th>
                         <th>SourceIP</th>
+                        <th>Chain</th>
                         <th>下载量</th>
                         <th>上传量</th>
                         <th>总计</th>
@@ -103,6 +147,7 @@
                             <td x-text="index + 1"></td>
                             <td x-text="item.Target"></td>
                             <td x-text="item.SourceIP"></td>
+                            <td x-text="item.Chain"></td>
                             <td x-text="formatBytes(item.Download)"></td>
                             <td x-text="formatBytes(item.Upload)"></td>
                             <td x-text="formatBytes(item.Total)"></td>
@@ -130,12 +175,19 @@
             filteredStats: [],
             selectedSourceIPs: [],
             uniqueSourceIPs: [],
+            selectedChains: [],
+            uniqueChains: [],
             loading: true,
             error: null,
             
             get isAllSelected() {
                 return this.uniqueSourceIPs.length > 0 && 
                        this.selectedSourceIPs.length === this.uniqueSourceIPs.length;
+            },
+            
+            get isAllChainsSelected() {
+                return this.uniqueChains.length > 0 && 
+                       this.selectedChains.length === this.uniqueChains.length;
             },
             
             loadStats() {
@@ -146,6 +198,7 @@
                         this.stats = data;
                         this.filteredStats = data;
                         this.extractUniqueSourceIPs();
+                        this.extractUniqueChains();
                         this.loading = false;
                     })
                     .catch(error => {
@@ -163,6 +216,16 @@
                     }
                 });
                 this.uniqueSourceIPs = Array.from(sourceIPSet).sort();
+            },
+            
+            extractUniqueChains() {
+                const chainSet = new Set();
+                this.stats.forEach(item => {
+                    if (item.Chain && item.Chain !== 'Unknown') {
+                        chainSet.add(item.Chain);
+                    }
+                });
+                this.uniqueChains = Array.from(chainSet).sort();
             },
             
             toggleAll() {
@@ -184,18 +247,38 @@
                 this.filterStats();
             },
             
-            filterStats() {
-                if (this.selectedSourceIPs.length === 0) {
-                    this.filteredStats = this.stats;
+            toggleAllChains() {
+                if (this.isAllChainsSelected) {
+                    this.selectedChains = [];
                 } else {
-                    this.filteredStats = this.stats.filter(item => 
-                        this.selectedSourceIPs.includes(item.SourceIP)
-                    );
+                    this.selectedChains = [...this.uniqueChains];
                 }
+                this.filterStats();
+            },
+            
+            toggleChain(chain) {
+                const index = this.selectedChains.indexOf(chain);
+                if (index > -1) {
+                    this.selectedChains.splice(index, 1);
+                } else {
+                    this.selectedChains.push(chain);
+                }
+                this.filterStats();
+            },
+            
+            filterStats() {
+                this.filteredStats = this.stats.filter(item => {
+                    const matchSourceIP = this.selectedSourceIPs.length === 0 || 
+                                          this.selectedSourceIPs.includes(item.SourceIP);
+                    const matchChain = this.selectedChains.length === 0 || 
+                                      this.selectedChains.includes(item.Chain);
+                    return matchSourceIP && matchChain;
+                });
             },
             
             clearFilters() {
                 this.selectedSourceIPs = [];
+                this.selectedChains = [];
                 this.filteredStats = this.stats;
             }
         }
