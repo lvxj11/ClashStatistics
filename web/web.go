@@ -407,12 +407,14 @@ func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTe
 		CurrentDate    string
 		TimeZoneName   string
 		TimeZoneOffset string
+		Version        string
 	}{
 		Title:          title,
 		CurrentPage:    currentPage,
 		CurrentDate:    time.Now().Format("2006-01-02"),
 		TimeZoneName:   timeZoneName,
 		TimeZoneOffset: timeZoneOffset,
+		Version:        utils.Version,
 	}
 
 	err = tmpl.Execute(w, data)
