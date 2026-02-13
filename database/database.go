@@ -556,7 +556,6 @@ func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]
 	var args []interface{}
 
 	baseWhere := "(host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != '')"
-	args = append(args)
 
 	if startTimestamp > 0 && endTimestamp > 0 {
 		whereClause = baseWhere + " AND end_timestamp >= ? AND end_timestamp <= ?"
