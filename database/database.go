@@ -11,7 +11,7 @@ import (
 
 	"clash-statistics/utils"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Database 结构体
@@ -140,7 +140,7 @@ func InitDB() (*Database, error) {
 		return nil, fmt.Errorf("创建数据目录失败: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", "./data/clash_statistics.db")
+	db, err := sql.Open("sqlite", "./data/clash_statistics.db")
 	if err != nil {
 		return nil, err
 	}
