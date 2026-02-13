@@ -145,6 +145,22 @@ func InitDB() (*Database, error) {
 		return nil, err
 	}
 
+	// 优化数据库配置
+	_, err = db.Exec("PRAGMA journal_mode = WAL")
+	if err != nil {
+		return nil, fmt.Errorf("设置 journal_mode 失败: %v", err)
+	}
+
+	_, err = db.Exec("PRAGMA synchronous = NORMAL")
+	if err != nil {
+		return nil, fmt.Errorf("设置 synchronous 失败: %v", err)
+	}
+
+	_, err = db.Exec("PRAGMA cache_size = -8192") // 使用 8MB 缓存
+	if err != nil {
+		return nil, fmt.Errorf("设置 cache_size 失败: %v", err)
+	}
+
 	// 创建表
 	sqlStmt := `
 	CREATE TABLE IF NOT EXISTS connections (
