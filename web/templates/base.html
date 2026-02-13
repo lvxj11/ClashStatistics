@@ -49,10 +49,6 @@
                 <a href="/" class="btn btn-ghost text-xl">Clash Statistics Dashboard</a>
                 <span class="text-xs text-gray-400">v{{.Version}}</span>
             </div>
-            <div class="flex-none gap-2">
-                <button onclick="location.reload()" class="btn btn-sm btn-primary">刷新数据</button>
-                <button onclick="refreshAPI()" class="btn btn-sm btn-secondary">API 刷新</button>
-            </div>
         </div>
         
         <div class="tabs tabs-boxed mx-4 mt-4 justify-center">
@@ -79,19 +75,6 @@
     </div>
     
     <script>
-        function refreshAPI() {
-            fetch('/refresh')
-                .then(response => response.json())
-                .then(data => {
-                    alert('数据已刷新');
-                    location.reload();
-                })
-                .catch(error => {
-                    console.error('错误:', error);
-                    alert('刷新失败');
-                });
-        }
-        
         function formatBytes(bytes) {
             const unit = 1024;
             if (bytes < unit) {

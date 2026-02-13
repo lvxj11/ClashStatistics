@@ -595,6 +595,7 @@ func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]
 			END AS target,
 			CASE 
 				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+				WHEN type = 'Inner' THEN 'Inner'
 				ELSE 'Unknown'
 			END AS source_ip,
 			CASE 
@@ -614,6 +615,7 @@ func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]
 			END,
 			CASE 
 				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+				WHEN type = 'Inner' THEN 'Inner'
 				ELSE 'Unknown'
 			END,
 			CASE 
@@ -649,13 +651,22 @@ func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]
 func (d *Database) GetSourceIPStats() ([]StatsEntry, error) {
 	query := `
 		SELECT 
-			source_ip AS target,
+			CASE 
+				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+				WHEN type = 'Inner' THEN 'Inner'
+				ELSE 'Unknown'
+			END AS target,
 			SUM(download) AS download,
 			SUM(upload) AS upload,
 			SUM(download + upload) AS total
 		FROM connections
-		WHERE source_ip IS NOT NULL AND source_ip != ''
-		GROUP BY source_ip
+		WHERE (source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner'
+		GROUP BY 
+			CASE 
+				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+				WHEN type = 'Inner' THEN 'Inner'
+				ELSE 'Unknown'
+			END
 		ORDER BY total DESC
 		LIMIT 100
 	`
@@ -692,10 +703,15 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 	// 构建查询，使用时间戳范围查询（更高效）
 	query := `
 		SELECT 
-			source_ip, start_timestamp, end_timestamp
+			CASE 
+				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+				WHEN type = 'Inner' THEN 'Inner'
+				ELSE 'Unknown'
+			END AS source_ip,
+			start_timestamp, end_timestamp
 		FROM connections
 		WHERE start_timestamp >= ? AND start_timestamp < ?
-		AND source_ip IS NOT NULL AND source_ip != ''
+		AND ((source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner')
 		ORDER BY source_ip, start_timestamp
 	`
 
