@@ -21,28 +21,58 @@
                     <label class="label">
                         <span class="label-text">SourceIP 筛选</span>
                     </label>
-                    <div class="relative">
-                        <select 
-                            class="select select-bordered w-full" 
-                            x-model="dropdownSourceIP"
-                            @change="addSourceIP"
+                    <div class="relative" x-data="{ isOpen: false }">
+                        <button 
+                            @click="isOpen = !isOpen"
+                            @click.outside="isOpen = false"
+                            class="select select-bordered w-full text-left flex items-center justify-between"
                         >
-                            <option value="">选择 SourceIP</option>
-                            <template x-for="sourceIP in availableSourceIPs" :key="sourceIP">
-                                <option :value="sourceIP" x-text="sourceIP"></option>
-                            </template>
-                        </select>
+                            <span x-text="selectedSourceIPs.length > 0 ? `已选 ${selectedSourceIPs.length} 项` : '选择 SourceIP'"></span>
+                            <svg x-show="!isOpen" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                            <svg x-show="isOpen" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            </svg>
+                        </button>
+                        
+                        <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            <div class="p-2">
+                                <label 
+                                    class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
+                                    @click="toggleAll"
+                                >
+                                    <div class="flex items-center justify-center w-5 h-5 border rounded"
+                                         :class="isAllSelected ? 'bg-primary border-primary' : 'border-gray-400'">
+                                        <svg x-show="isAllSelected" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                    <span class="text-sm font-medium">全选</span>
+                                </label>
+                                <template x-for="sourceIP in uniqueSourceIPs" :key="sourceIP">
+                                    <label 
+                                        class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
+                                        @click="toggleSourceIP(sourceIP)"
+                                    >
+                                        <div class="flex items-center justify-center w-5 h-5 border rounded"
+                                             :class="selectedSourceIPs.includes(sourceIP) ? 'bg-primary border-primary' : 'border-gray-400'">
+                                            <svg x-show="selectedSourceIPs.includes(sourceIP)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                            </svg>
+                                        </div>
+                                        <span class="text-sm" x-text="sourceIP"></span>
+                                    </label>
+                                </template>
+                                <template x-if="uniqueSourceIPs.length === 0">
+                                    <div class="p-2 text-sm text-gray-500">暂无可用选项</div>
+                                </template>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
-                <!-- 筛选状态显示 -->
-                <div x-show="selectedSourceIPs.length > 0" class="flex items-center gap-2 flex-wrap">
-                    <template x-for="ip in selectedSourceIPs" :key="ip">
-                        <span class="badge badge-primary">
-                            <span x-text="ip"></span>
-                            <button @click="removeSourceIP(ip)" class="ml-1 text-sm hover:underline">×</button>
-                        </span>
-                    </template>
+                <div x-show="selectedSourceIPs.length > 0" class="flex items-center gap-2">
                     <button @click="clearFilters" class="btn btn-sm btn-outline">
                         清除筛选
                     </button>
@@ -100,9 +130,13 @@
             filteredStats: [],
             selectedSourceIPs: [],
             uniqueSourceIPs: [],
-            dropdownSourceIP: '',
             loading: true,
             error: null,
+            
+            get isAllSelected() {
+                return this.uniqueSourceIPs.length > 0 && 
+                       this.selectedSourceIPs.length === this.uniqueSourceIPs.length;
+            },
             
             loadStats() {
                 this.loading = true;
@@ -131,16 +165,23 @@
                 this.uniqueSourceIPs = Array.from(sourceIPSet).sort();
             },
             
-            get availableSourceIPs() {
-                return this.uniqueSourceIPs.filter(ip => !this.selectedSourceIPs.includes(ip));
+            toggleAll() {
+                if (this.isAllSelected) {
+                    this.selectedSourceIPs = [];
+                } else {
+                    this.selectedSourceIPs = [...this.uniqueSourceIPs];
+                }
+                this.filterStats();
             },
             
-            addSourceIP() {
-                if (this.dropdownSourceIP && !this.selectedSourceIPs.includes(this.dropdownSourceIP)) {
-                    this.selectedSourceIPs.push(this.dropdownSourceIP);
-                    this.dropdownSourceIP = '';
-                    this.filterStats();
+            toggleSourceIP(sourceIP) {
+                const index = this.selectedSourceIPs.indexOf(sourceIP);
+                if (index > -1) {
+                    this.selectedSourceIPs.splice(index, 1);
+                } else {
+                    this.selectedSourceIPs.push(sourceIP);
                 }
+                this.filterStats();
             },
             
             filterStats() {
@@ -153,17 +194,8 @@
                 }
             },
             
-            removeSourceIP(ip) {
-                const index = this.selectedSourceIPs.indexOf(ip);
-                if (index > -1) {
-                    this.selectedSourceIPs.splice(index, 1);
-                    this.filterStats();
-                }
-            },
-            
             clearFilters() {
                 this.selectedSourceIPs = [];
-                this.dropdownSourceIP = '';
                 this.filteredStats = this.stats;
             }
         }
