@@ -16,56 +16,84 @@
     <div x-show="!loading && !error" x-cloak>
         <!-- 筛选区域 -->
         <div class="mb-6 p-4 bg-base-100 rounded-lg shadow-sm">
-            <div class="flex-1 min-w-[200px]">
-                <label class="label">
-                    <span class="label-text">Chain 筛选</span>
-                </label>
-                <div class="relative" x-data="{ isOpen: false }">
-                    <button 
-                        @click="isOpen = !isOpen"
-                        @click.outside="isOpen = false"
-                        class="select select-bordered w-full text-left"
-                    >
-                        <span x-text="selectedChains.length > 0 ? `已选 ${selectedChains.length} 项` : '选择 Chain'"></span>
-                    </button>
-                    
-                    <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                        <div class="p-2">
-                            <label 
-                                class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
-                                @click.stop="toggleAllChains"
-                            >
-                                <div class="flex items-center justify-center w-5 h-5 border rounded"
-                                     :class="isAllChainsSelected ? 'bg-primary border-primary' : 'border-gray-400'">
-                                    <svg x-show="isAllChainsSelected" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-                                    </svg>
-                                </div>
-                                <span class="text-sm font-medium">全选</span>
-                            </label>
-                            <template x-for="chain in uniqueChains" :key="chain">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text">Chain 筛选</span>
+                    </label>
+                    <div class="relative" x-data="{ isOpen: false }">
+                        <button 
+                            @click="isOpen = !isOpen"
+                            @click.outside="isOpen = false"
+                            class="select select-bordered w-full text-left"
+                        >
+                            <span x-text="selectedChains.length > 0 ? `已选 ${selectedChains.length} 项` : '选择 Chain'"></span>
+                        </button>
+                        
+                        <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            <div class="p-2">
                                 <label 
-                                    class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
-                                    @click.stop="toggleChain(chain)"
+                                    class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
+                                    @click.stop="toggleAllChains"
                                 >
                                     <div class="flex items-center justify-center w-5 h-5 border rounded"
-                                         :class="selectedChains.includes(chain) ? 'bg-primary border-primary' : 'border-gray-400'">
-                                        <svg x-show="selectedChains.includes(chain)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                         :class="isAllChainsSelected ? 'bg-primary border-primary' : 'border-gray-400'">
+                                        <svg x-show="isAllChainsSelected" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
                                         </svg>
                                     </div>
-                                    <span class="text-sm" x-text="chain"></span>
+                                    <span class="text-sm font-medium">全选</span>
                                 </label>
-                            </template>
-                            <template x-if="uniqueChains.length === 0">
-                                <div class="p-2 text-sm text-gray-500">暂无可用选项</div>
-                            </template>
+                                <template x-for="chain in uniqueChains" :key="chain">
+                                    <label 
+                                        class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
+                                        @click.stop="toggleChain(chain)"
+                                    >
+                                        <div class="flex items-center justify-center w-5 h-5 border rounded"
+                                             :class="selectedChains.includes(chain) ? 'bg-primary border-primary' : 'border-gray-400'">
+                                            <svg x-show="selectedChains.includes(chain)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                            </svg>
+                                        </div>
+                                        <span class="text-sm" x-text="chain"></span>
+                                    </label>
+                                </template>
+                                <template x-if="uniqueChains.length === 0">
+                                    <div class="p-2 text-sm text-gray-500">暂无可用选项</div>
+                                </template>
+                            </div>
                         </div>
                     </div>
                 </div>
+
+                <div class="flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text">起始时间</span>
+                    </label>
+                    <input 
+                        type="datetime-local" 
+                        x-model="startTime"
+                        @change="loadSourceIPStats()"
+                        class="input input-bordered w-full"
+                        step="60"
+                    >
+                </div>
+
+                <div class="flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text">结束时间</span>
+                    </label>
+                    <input 
+                        type="datetime-local" 
+                        x-model="endTime"
+                        @change="loadSourceIPStats()"
+                        class="input input-bordered w-full"
+                        step="60"
+                    >
+                </div>
             </div>
             
-            <div x-show="selectedChains.length > 0" class="flex items-center gap-2 mt-4">
+            <div x-show="selectedChains.length > 0 || startTime || endTime" class="flex items-center gap-2 mt-4">
                 <button @click="clearFilters" class="btn btn-sm btn-outline">
                     清除筛选
                 </button>
@@ -122,6 +150,8 @@
             uniqueChains: [],
             loading: true,
             error: null,
+            startTime: '',
+            endTime: '',
             
             get isAllChainsSelected() {
                 return this.uniqueChains.length > 0 && 
@@ -130,7 +160,18 @@
             
             loadSourceIPStats() {
                 this.loading = true;
-                fetch('/api/stats')
+                let url = '/api/stats';
+                const params = new URLSearchParams();
+                if (this.startTime) {
+                    params.append('startTime', this.startTime);
+                }
+                if (this.endTime) {
+                    params.append('endTime', this.endTime);
+                }
+                if (params.toString()) {
+                    url += '?' + params.toString();
+                }
+                fetch(url)
                     .then(response => response.json())
                     .then(data => {
                         this.stats = this.calculateSourceIPStats(data);
@@ -204,8 +245,18 @@
                 if (this.selectedChains.length === 0) {
                     this.filteredStats = this.stats;
                 } else {
-                    // 重新从原始数据计算，只包含选中的Chain
-                    fetch('/api/stats')
+                    let url = '/api/stats';
+                    const params = new URLSearchParams();
+                    if (this.startTime) {
+                        params.append('startTime', this.startTime);
+                    }
+                    if (this.endTime) {
+                        params.append('endTime', this.endTime);
+                    }
+                    if (params.toString()) {
+                        url += '?' + params.toString();
+                    }
+                    fetch(url)
                         .then(response => response.json())
                         .then(data => {
                             const filteredData = data.filter(item => 
@@ -218,6 +269,8 @@
             
             clearFilters() {
                 this.selectedChains = [];
+                this.startTime = '';
+                this.endTime = '';
                 this.filteredStats = this.stats;
             }
         }

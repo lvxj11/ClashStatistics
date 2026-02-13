@@ -235,7 +235,29 @@ func (s *Server) showDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	stats, err := s.db.GetStats()
+	startTime := r.URL.Query().Get("startTime")
+	endTime := r.URL.Query().Get("endTime")
+
+	var startTimestamp, endTimestamp int64
+	var err error
+
+	if startTime != "" {
+		startTimestamp, err = parseDateTimeToTimestamp(startTime)
+		if err != nil {
+			http.Error(w, "无效的起始时间格式: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	if endTime != "" {
+		endTimestamp, err = parseDateTimeToTimestamp(endTime)
+		if err != nil {
+			http.Error(w, "无效的结束时间格式: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	stats, err := s.db.GetStatsWithTimeRange(startTimestamp, endTimestamp)
 	if err != nil {
 		http.Error(w, "获取统计数据失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -397,4 +419,16 @@ func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTe
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// parseDateTimeToTimestamp 将 datetime-local 格式的时间字符串转换为 Unix 时间戳
+// 输入格式: "2006-01-02T15:04" (浏览器 datetime-local 输入格式)
+// 输出: Unix 时间戳（秒）
+func parseDateTimeToTimestamp(dateTimeStr string) (int64, error) {
+	layout := "2006-01-02T15:04"
+	t, err := time.Parse(layout, dateTimeStr)
+	if err != nil {
+		return 0, fmt.Errorf("解析时间失败: %w", err)
+	}
+	return t.Unix(), nil
 }

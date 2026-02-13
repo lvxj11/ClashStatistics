@@ -16,7 +16,7 @@
     <div x-show="!loading && !error" x-cloak>
         <!-- 筛选区域 -->
         <div class="mb-6 p-4 bg-base-100 rounded-lg shadow-sm">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="flex-1 min-w-[200px]">
                     <label class="label">
                         <span class="label-text">SourceIP 筛选</span>
@@ -114,9 +114,35 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text">起始时间</span>
+                    </label>
+                    <input 
+                        type="datetime-local" 
+                        x-model="startTime"
+                        @change="loadStats()"
+                        class="input input-bordered w-full"
+                        step="60"
+                    >
+                </div>
+
+                <div class="flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text">结束时间</span>
+                    </label>
+                    <input 
+                        type="datetime-local" 
+                        x-model="endTime"
+                        @change="loadStats()"
+                        class="input input-bordered w-full"
+                        step="60"
+                    >
+                </div>
             </div>
             
-            <div x-show="selectedSourceIPs.length > 0 || selectedChains.length > 0" class="flex items-center gap-2 mt-4">
+            <div x-show="selectedSourceIPs.length > 0 || selectedChains.length > 0 || startTime || endTime" class="flex items-center gap-2 mt-4">
                 <button @click="clearFilters" class="btn btn-sm btn-outline">
                     清除筛选
                 </button>
@@ -179,6 +205,8 @@
             uniqueChains: [],
             loading: true,
             error: null,
+            startTime: '',
+            endTime: '',
             
             get isAllSelected() {
                 return this.uniqueSourceIPs.length > 0 && 
@@ -192,7 +220,18 @@
             
             loadStats() {
                 this.loading = true;
-                fetch('/api/stats')
+                let url = '/api/stats';
+                const params = new URLSearchParams();
+                if (this.startTime) {
+                    params.append('startTime', this.startTime);
+                }
+                if (this.endTime) {
+                    params.append('endTime', this.endTime);
+                }
+                if (params.toString()) {
+                    url += '?' + params.toString();
+                }
+                fetch(url)
                     .then(response => response.json())
                     .then(data => {
                         this.stats = data;
@@ -279,6 +318,8 @@
             clearFilters() {
                 this.selectedSourceIPs = [];
                 this.selectedChains = [];
+                this.startTime = '';
+                this.endTime = '';
                 this.filteredStats = this.stats;
             }
         }

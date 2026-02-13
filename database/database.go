@@ -544,7 +544,34 @@ func (d *Database) SaveConnections(connections []Connection) error {
 
 // GetStats 获取统计信息
 func (d *Database) GetStats() ([]StatsEntry, error) {
-	query := `
+	return d.GetStatsWithTimeRange(0, 0)
+}
+
+// GetStatsWithTimeRange 获取指定时间范围内的统计信息
+// startTimestamp: 起始时间戳（秒），0 表示不限制
+// endTimestamp: 结束时间戳（秒），0 表示不限制
+// 统计基于连接的结束时间戳（end_timestamp）
+func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
+	var whereClause string
+	var args []interface{}
+
+	baseWhere := "(host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != '')"
+	args = append(args)
+
+	if startTimestamp > 0 && endTimestamp > 0 {
+		whereClause = baseWhere + " AND end_timestamp >= ? AND end_timestamp <= ?"
+		args = append(args, startTimestamp, endTimestamp)
+	} else if startTimestamp > 0 {
+		whereClause = baseWhere + " AND end_timestamp >= ?"
+		args = append(args, startTimestamp)
+	} else if endTimestamp > 0 {
+		whereClause = baseWhere + " AND end_timestamp <= ?"
+		args = append(args, endTimestamp)
+	} else {
+		whereClause = baseWhere
+	}
+
+	query := fmt.Sprintf(`
 		SELECT 
 			CASE 
 				WHEN host IS NOT NULL AND host != '' THEN host
@@ -563,7 +590,7 @@ func (d *Database) GetStats() ([]StatsEntry, error) {
 			SUM(upload) AS upload,
 			SUM(download + upload) AS total
 		FROM connections
-		WHERE (host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != '')
+		WHERE %s
 		GROUP BY 
 			CASE 
 				WHEN host IS NOT NULL AND host != '' THEN host
@@ -580,9 +607,9 @@ func (d *Database) GetStats() ([]StatsEntry, error) {
 			END
 		ORDER BY total DESC
 		LIMIT 200
-	`
+	`, whereClause)
 
-	rows, err := d.db.Query(query)
+	rows, err := d.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
