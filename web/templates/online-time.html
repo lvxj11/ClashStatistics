@@ -26,7 +26,7 @@
     <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
         <div class="gantt-container space-y-2">
             <!-- 时间轴 -->
-            <div class="flex items-center">
+            <div class="flex items-center sticky top-0 bg-base-100 z-10">
                 <div class="w-[200px] flex-shrink-0"></div>
                 <div class="flex-1 relative min-w-[600px]">
                     <!-- 时间轴背景线 -->
@@ -45,26 +45,34 @@
                 </div>
             </div>
             
-            <!-- 甘特图条目 -->
-            <template x-for="(item, itemIndex) in ganttData" :key="itemIndex">
-                <div class="flex items-center">
-                    <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium" 
-                         x-text="item.SourceIP || 'Unknown'" 
-                         :title="item.SourceIP || 'Unknown'"></div>
-                    <div class="flex-1 min-w-[600px] h-4 bg-gray-800 rounded-full overflow-hidden relative group">
-                        <!-- 连续的活动时间段 -->
-                        <div class="absolute inset-0 flex">
-                            <template x-for="(slot, slotIndex) in 288" :key="slotIndex">
-                                <div class="flex-1 h-full" 
-                                     :class="getSlotColor(slotIndex < item.TimeSlots.length ? item.TimeSlots[slotIndex] : 0)"></div>
-                            </template>
+            <!-- 虚拟滚动容器 -->
+            <div class="relative" style="height: 600px; overflow-y: auto;" @scroll="handleScroll">
+                <!-- 占位容器，用于撑开滚动条 -->
+                <div :style="{ height: (ganttData.length * 24) + 'px' }"></div>
+                
+                <!-- 可见区域 -->
+                <div class="absolute top-0 left-0 right-0" :style="{ transform: `translateY(${visibleStartIndex * 24}px)` }">
+                    <template x-for="(item, index) in visibleItems" :key="item.SourceIP">
+                        <div class="flex items-center" style="height: 24px;">
+                            <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium" 
+                                 x-text="item.SourceIP || 'Unknown'" 
+                                 :title="item.SourceIP || 'Unknown'"></div>
+                            <div class="flex-1 min-w-[600px] h-4 bg-gray-800 rounded-full overflow-hidden relative group">
+                                <!-- 连续的活动时间段 -->
+                                <div class="absolute inset-0 flex">
+                                    <template x-for="(slot, slotIndex) in 288" :key="slotIndex">
+                                        <div class="flex-1 h-full" 
+                                             :class="getSlotColor(item.TimeSlots[slotIndex])"></div>
+                                    </template>
+                                </div>
+                                <!-- 悬停提示 -->
+                                <div class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 flex items-center justify-center text-white text-xs rounded-full"
+                                     x-text="item.activeTimeText"></div>
+                            </div>
                         </div>
-                        <!-- 悬停提示 -->
-                        <div class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 flex items-center justify-center text-white text-xs rounded-full"
-                             x-text="getActiveTime(item.TimeSlots)"></div>
-                    </div>
+                    </template>
                 </div>
-            </template>
+            </div>
         </div>
     </div>
     
@@ -85,9 +93,15 @@
             selectedDate: '{{.CurrentDate}}',
             loading: true,
             error: null,
+            visibleStartIndex: 0,
+            visibleEndIndex: 0,
+            visibleItems: [],
+            rowHeight: 24,
+            containerHeight: 600,
             loadGanttChart() {
                 this.loading = true;
                 this.error = null;
+                this.visibleItems = [];
                 fetch('/api/gantt?date=' + this.selectedDate)
                     .then(response => {
                         if (!response.ok) {
@@ -96,7 +110,14 @@
                         return response.json();
                     })
                     .then(data => {
-                        this.ganttData = data;
+                        this.ganttData = data || [];
+                        this.processData();
+                        this.visibleStartIndex = 0;
+                        this.visibleEndIndex = Math.min(
+                            Math.ceil(this.containerHeight / this.rowHeight) + 5,
+                            this.ganttData.length
+                        );
+                        this.updateVisibleItems();
                         this.loading = false;
                     })
                     .catch(error => {
@@ -104,6 +125,24 @@
                         this.error = '加载甘特图失败: ' + error.message;
                         this.loading = false;
                     });
+            },
+            processData() {
+                if (!this.ganttData || this.ganttData.length === 0) return;
+                this.ganttData.forEach(item => {
+                    item.activeTimeText = this.getActiveTime(item.TimeSlots);
+                });
+            },
+            handleScroll(event) {
+                const scrollTop = event.target.scrollTop;
+                this.visibleStartIndex = Math.floor(scrollTop / this.rowHeight);
+                this.visibleEndIndex = Math.min(
+                    this.visibleStartIndex + Math.ceil(this.containerHeight / this.rowHeight) + 5,
+                    this.ganttData.length
+                );
+                this.updateVisibleItems();
+            },
+            updateVisibleItems() {
+                this.visibleItems = this.ganttData.slice(this.visibleStartIndex, this.visibleEndIndex);
             },
             formatHour(hour) {
                 return String(hour).padStart(2, '0');
