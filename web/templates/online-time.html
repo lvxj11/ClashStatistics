@@ -153,7 +153,8 @@
                 const hours = Math.floor(activeMinutes / 60);
                 const minutes = activeMinutes % 60;
                 const maxConnections = Math.max(...timeSlots);
-                return `在线时间: ${hours}h ${minutes}m, 最大连接数: ${maxConnections}`;
+                const maxConnectionsText = maxConnections === 255 ? '255+' : maxConnections;
+                return `在线时间: ${hours}h ${minutes}m, 最大连接数: ${maxConnectionsText}`;
             },
             getSlotColor(connectionCount) {
                 if (connectionCount === 0) return 'bg-transparent';
