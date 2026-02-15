@@ -104,7 +104,7 @@ type StatsEntry struct {
 // GanttEntry 表示甘特图条目
 type GanttEntry struct {
 	SourceIP  string
-	TimeSlots [144]int // 每天144个10分钟时间段，存储活动连接数
+	TimeSlots [288]byte // 每天288个5分钟时间段，存储活动连接数
 }
 
 // parseToTimestamp 将时间字符串转换为 Unix 时间戳
@@ -690,17 +690,17 @@ func (d *Database) GetSourceIPStats() ([]StatsEntry, error) {
 	return stats, nil
 }
 
-// calculateTimeSlotIndex 计算时间戳对应的时间槽序号（0-143）
+// calculateTimeSlotIndex 计算时间戳对应的时间槽序号（0-287）
 func calculateTimeSlotIndex(timestamp int64, dateStart time.Time) int {
 	t := time.Unix(timestamp, 0).In(dateStart.Location())
 	duration := t.Sub(dateStart)
 	minutes := int(duration.Minutes())
-	slotIndex := minutes / 10
+	slotIndex := minutes / 5
 	if slotIndex < 0 {
 		return 0
 	}
-	if slotIndex > 143 {
-		return 143
+	if slotIndex > 287 {
+		return 287
 	}
 	return slotIndex
 }
@@ -737,7 +737,7 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 	defer rows.Close()
 
 	// 按sourceIP组织数据
-	ganttData := make(map[string][144]int)
+	ganttData := make(map[string][288]byte)
 
 	for rows.Next() {
 		var sourceIP string
@@ -762,7 +762,9 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 
 		// 给从开始到结束的所有时间槽加1
 		for i := startSlot; i <= endSlot; i++ {
-			timeSlots[i]++
+			if timeSlots[i] < 255 {
+				timeSlots[i]++
+			}
 		}
 
 		ganttData[sourceIP] = timeSlots

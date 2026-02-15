@@ -54,7 +54,7 @@
                     <div class="flex-1 min-w-[600px] h-4 bg-gray-800 rounded-full overflow-hidden relative group">
                         <!-- 连续的活动时间段 -->
                         <div class="absolute inset-0 flex">
-                            <template x-for="(slot, slotIndex) in 144" :key="slotIndex">
+                            <template x-for="(slot, slotIndex) in 288" :key="slotIndex">
                                 <div class="flex-1 h-full" 
                                      :class="getSlotColor(slotIndex < item.TimeSlots.length ? item.TimeSlots[slotIndex] : 0)"></div>
                             </template>
@@ -110,7 +110,7 @@
             },
             getActiveTime(timeSlots) {
                 const activeSlots = timeSlots.filter(slot => slot > 0).length;
-                const activeMinutes = activeSlots * 10;
+                const activeMinutes = activeSlots * 5;
                 const hours = Math.floor(activeMinutes / 60);
                 const minutes = activeMinutes % 60;
                 const maxConnections = Math.max(...timeSlots);
@@ -119,10 +119,10 @@
             getSlotColor(connectionCount) {
                 if (connectionCount === 0) return 'bg-transparent';
                 if (connectionCount <= 2) return 'bg-info';
-                if (connectionCount <= 6) return 'bg-success';
-                if (connectionCount <= 18) return 'bg-success-content';
-                if (connectionCount <= 54) return 'bg-warning';
-                if (connectionCount <= 162) return 'bg-warning-content';
+                if (connectionCount <= 20) return 'bg-success';
+                if (connectionCount <= 50) return 'bg-success-content';
+                if (connectionCount <= 150) return 'bg-warning';
+                if (connectionCount <= 254) return 'bg-warning-content';
                 return 'bg-error-content';
             }
         }
