@@ -690,6 +690,21 @@ func (d *Database) GetSourceIPStats() ([]StatsEntry, error) {
 	return stats, nil
 }
 
+// calculateTimeSlotIndex 计算时间戳对应的时间槽序号（0-143）
+func calculateTimeSlotIndex(timestamp int64, dateStart time.Time) int {
+	t := time.Unix(timestamp, 0).In(dateStart.Location())
+	duration := t.Sub(dateStart)
+	minutes := int(duration.Minutes())
+	slotIndex := minutes / 10
+	if slotIndex < 0 {
+		return 0
+	}
+	if slotIndex > 143 {
+		return 143
+	}
+	return slotIndex
+}
+
 // GetGanttData 获取甘特图数据
 func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 	// 计算日期范围的时间戳（使用本地时区）
@@ -733,35 +748,21 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 			return nil, err
 		}
 
-		// 使用本地时区转换时间戳
-		startTimeParsed := time.Unix(startTimestamp, 0)
-		endTimeParsed := time.Unix(endTimestamp, 0)
-
 		// 如果 end_timestamp 为 0，使用当前时间
 		if endTimestamp == 0 {
-			endTimeParsed = time.Now().In(time.UTC)
+			endTimestamp = time.Now().Unix()
 		}
 
 		// 获取或创建时间槽
 		timeSlots := ganttData[sourceIP]
 
-		// 基于本地时间计算时间槽
-		// 遍历所有144个时间槽（每天144个10分钟时间段）
-		for i := 0; i < 144; i++ {
-			// 计算当前时间槽的本地时间范围
-			slotBegin := dateStart.Add(time.Duration(i*10) * time.Minute)
-			slotEnd := slotBegin.Add(10 * time.Minute)
+		// 计算开始和结束时间槽序号
+		startSlot := calculateTimeSlotIndex(startTimestamp, dateStart)
+		endSlot := calculateTimeSlotIndex(endTimestamp, dateStart)
 
-			// 将本地时间槽转换为 UTC 时间，用于与数据库中的 UTC 时间进行比较
-			utcSlotBegin := slotBegin.In(time.UTC)
-			utcSlotEnd := slotEnd.In(time.UTC)
-
-			// 检查连接是否在这个时间段内活跃
-			// 只有当连接开始时间早于时间段结束时间 且 连接结束时间晚于时间段开始时间时，才认为在该时间段内活跃
-			if (startTimeParsed.Before(utcSlotEnd) || startTimeParsed.Equal(utcSlotEnd)) &&
-				(endTimeParsed.After(utcSlotBegin) || endTimeParsed.Equal(utcSlotBegin)) {
-				timeSlots[i]++ // 增加连接数计数
-			}
+		// 给从开始到结束的所有时间槽加1
+		for i := startSlot; i <= endSlot; i++ {
+			timeSlots[i]++
 		}
 
 		ganttData[sourceIP] = timeSlots
