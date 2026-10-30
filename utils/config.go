@@ -46,16 +46,17 @@ func hasValidEnvironmentVariables() bool {
 	return false
 }
 
-// LoadConfig 从 config.ini 加载配置，并支持环境变量覆盖
+// LoadConfig 加载配置
+// 优先级：环境变量 > config.ini > 默认值（逐项覆盖，而非整体二选一）
 func LoadConfig() (*Config, error) {
 	config := &Config{
-		ClashHost:         "127.0.0.1:9090",
-		ClashSecret:       "",
-		ClashInterval:     1000,
-		LogLevel:          "warn", // 默认日志级别为警告
-		WebPort:           "8080", // 默认Web端口为8080
-		DBCleanupDays:     7,       // 默认保留7天数据
-		DBVacuumInterval:  24,      // 默认每24小时执行一次VACUUM
+		ClashHost:        "127.0.0.1:9090",
+		ClashSecret:      "",
+		ClashInterval:    1000,
+		LogLevel:         "warn", // 默认日志级别为警告
+		WebPort:          "8080", // 默认Web端口为8080
+		DBCleanupDays:    7,      // 默认保留7天数据
+		DBVacuumInterval: 24,     // 默认每24小时执行一次VACUUM
 	}
 
 	// 确保数据目录存在
@@ -63,90 +64,106 @@ func LoadConfig() (*Config, error) {
 		return config, fmt.Errorf("创建数据目录失败: %v", err)
 	}
 
-	// 1. 检查是否存在有效的环境变量
-	if hasValidEnvironmentVariables() {
-		// 存在有效环境变量，直接使用环境变量配置
-		GetLogger().Debug("检测到有效环境变量，使用环境变量配置\n")
-	} else {
-		// 2. 检查配置文件是否存在，不存在则生成默认配置
-		configPath := "./data/config.ini"
-		if _, err := os.Stat(configPath); os.IsNotExist(err) {
-			// 配置文件不存在，生成默认配置文件
-			err := GenerateDefaultConfig(config)
-			if err != nil {
+	configPath := "./data/config.ini"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// 配置文件不存在，尝试生成默认配置文件
+		if err := GenerateDefaultConfig(config); err != nil {
+			// 生成失败（例如数据目录不可写、容器挂载卷权限不足）不算致命错误：
+			// 有环境变量时可以纯靠环境变量运行，没有时才需要把问题暴露给用户
+			if hasValidEnvironmentVariables() {
+				GetLogger().Warn("生成默认配置文件失败，已忽略，继续以环境变量和默认值运行: %v\n", err)
+			} else {
 				return config, err
 			}
-			// 生成默认配置文件后返回错误，提示用户修改配置
+		} else if !hasValidEnvironmentVariables() {
+			// 裸机首次运行：提示用户修改配置后重启
 			return config, fmt.Errorf("配置文件不存在，已生成默认配置文件 ./data/config.ini，请根据需要修改配置后重新启动程序")
 		}
+	} else {
+		// 加载配置文件
+		if err := loadConfigFile(config, configPath); err != nil {
+			return config, err
+		}
+	}
 
-		// 3. 加载配置文件
-		file, err := os.Open(configPath)
-		if err == nil {
-			defer file.Close()
+	// 环境变量覆盖配置（最高优先级，逐项覆盖）
+	applyEnvOverrides(config)
 
-			scanner := bufio.NewScanner(file)
-			var currentSection string
+	return config, nil
+}
 
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
+// loadConfigFile 从指定路径读取配置文件，覆盖已有配置项
+func loadConfigFile(config *Config, configPath string) error {
+	file, err := os.Open(configPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-				// 跳过空行和注释
-				if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-					continue
+	scanner := bufio.NewScanner(file)
+	var currentSection string
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// 跳过空行和注释
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		// 处理节名 [clash]
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			currentSection = strings.ToLower(strings.Trim(line, "[]"))
+			continue
+		}
+
+		// 处理键值对
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// 移除引号（如果存在）
+		value = strings.Trim(value, "\"'")
+
+		switch currentSection {
+		case "clash":
+			switch strings.ToLower(key) {
+			case "host":
+				config.ClashHost = value
+			case "secret":
+				config.ClashSecret = value
+			case "interval":
+				if intVal, err := strconv.Atoi(value); err == nil {
+					config.ClashInterval = intVal
 				}
-
-				// 处理节名 [clash]
-				if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-					currentSection = strings.ToLower(strings.Trim(line, "[]"))
-					continue
+			}
+		case "server":
+			switch strings.ToLower(key) {
+			case "log_level":
+				config.LogLevel = value
+			case "web_port":
+				config.WebPort = value
+			case "db_cleanup_days":
+				if days, err := strconv.Atoi(value); err == nil {
+					config.DBCleanupDays = days
 				}
-
-				// 处理键值对
-				parts := strings.SplitN(line, "=", 2)
-				if len(parts) == 2 {
-					key := strings.TrimSpace(parts[0])
-					value := strings.TrimSpace(parts[1])
-
-					// 移除引号（如果存在）
-					value = strings.Trim(value, "\"'")
-
-					switch currentSection {
-					case "clash":
-						switch strings.ToLower(key) {
-						case "host":
-							config.ClashHost = value
-						case "secret":
-							config.ClashSecret = value
-						case "interval":
-							intVal, err := strconv.Atoi(value)
-							if err == nil {
-								config.ClashInterval = intVal
-							}
-						}
-					case "server":
-						switch strings.ToLower(key) {
-						case "log_level":
-							config.LogLevel = value
-						case "web_port":
-							config.WebPort = value
-						case "db_cleanup_days":
-							if days, err := strconv.Atoi(value); err == nil {
-								config.DBCleanupDays = days
-							}
-						case "db_vacuum_interval":
-							if interval, err := strconv.Atoi(value); err == nil {
-								config.DBVacuumInterval = interval
-							}
-						}
-					}
-
+			case "db_vacuum_interval":
+				if interval, err := strconv.Atoi(value); err == nil {
+					config.DBVacuumInterval = interval
 				}
 			}
 		}
 	}
 
-	// 4. 环境变量覆盖配置（最高优先级）
+	return scanner.Err()
+}
+
+// applyEnvOverrides 用环境变量逐项覆盖配置
+func applyEnvOverrides(config *Config) {
 	if host := os.Getenv("CLASH_HOST"); host != "" {
 		config.ClashHost = host
 		GetLogger().Debug("使用环境变量覆盖 ClashHost: %s\n", host)
@@ -181,8 +198,6 @@ func LoadConfig() (*Config, error) {
 			GetLogger().Debug("使用环境变量覆盖 DBVacuumInterval: %d\n", interval)
 		}
 	}
-
-	return config, nil
 }
 
 // GenerateDefaultConfig 生成默认配置文件

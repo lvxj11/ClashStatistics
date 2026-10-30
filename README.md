@@ -18,15 +18,23 @@
 
 ## 配置
 
-应用会读取同目录下的 `config.ini` 文件，包含以下配置项：
+应用读取运行目录下的 `./data/config.ini`。首次运行且没有任何环境变量时会生成该文件并提示修改；容器/裸机都可以通过环境变量配置，无需配置文件。
 
-- `host`: Clash API 主机地址，默认为 `127.0.0.1:9090`
-- `secret`: Clash API 认证密钥，默认为空
-- `interval`: 数据刷新间隔（毫秒），默认为 `1000`
-- `web_port`: Web 服务器端口，默认为 `8080`
-- `log_level`: 日志级别，默认为 `warn`
-- `db_cleanup_days`: 数据库清理天数，默认为 `7`
-- `db_vacuum_interval`: 数据库 vacuum 间隔（小时），默认为 `24`
+配置优先级（逐项覆盖）：**环境变量 > config.ini > 默认值**
+
+`config.ini` 包含以下配置项：
+
+| 配置项 | 环境变量 | 默认值 |
+|--------|----------|--------|
+| `host` | `CLASH_HOST` | `127.0.0.1:9090` |
+| `secret` | `CLASH_SECRET` | 空 |
+| `interval` | `CLASH_INTERVAL` | `1000` |
+| `web_port` | `WEB_PORT` | `8080` |
+| `log_level` | `LOG_LEVEL` | `warn` |
+| `db_cleanup_days` | `DB_CLEANUP_DAYS` | `7` |
+| `db_vacuum_interval` | `DB_VACUUM_INTERVAL` | `24` |
+
+即：设置了的环境变量覆盖对应的配置项，没设置的继续使用配置文件中的值，两者都没有才用默认值。
 
 ## 使用方法
 
@@ -45,9 +53,7 @@
 
 ## 目录结构
 
-- `data/` - 存放 SQLite 数据库文件
-- `web/templates/` - 存放网页模板文件
-- `config.ini` - 应用配置文件
+- `data/` - 存放 SQLite 数据库文件、日志文件和配置文件（`config.ini`）
 - `main.go` - 主程序文件
 - `web/` - Web 服务器相关代码
 - `database/` - 数据库操作相关代码
@@ -66,7 +72,7 @@
 
 ## 版本信息
 
-当前版本：v0.2.4
+当前版本：v0.4.4
 
 ## 技术栈
 

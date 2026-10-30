@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -17,11 +18,14 @@ const (
 )
 
 // Logger 日志管理结构体
+// 采集 goroutine、数据库维护 goroutine 和 HTTP 处理器会并发写日志，
+// 所有访问必须持有 mu，避免与日志轮转时的文件指针替换产生竞争
 type Logger struct {
+	mu            sync.Mutex
 	file          *os.File
 	logPath       string
-	maxSize       int64 // 最大日志文件大小（字节）
-	lastSize      int64 // 上次检查时的文件大小
+	maxSize       int64  // 最大日志文件大小（字节）
+	lastSize      int64  // 上次检查时的文件大小
 	logLevel      string // 日志级别
 	consoleOutput bool   // 是否输出到控制台
 }
@@ -93,8 +97,11 @@ func (l *Logger) shouldLog(level string) bool {
 
 // Write 写入日志
 func (l *Logger) Write(p []byte) (n int, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	// 检查日志文件大小
-	if cleanErr := l.checkAndClean(); cleanErr != nil {
+	if cleanErr := l.checkAndCleanLocked(); cleanErr != nil {
 		fmt.Printf("日志清理失败: %v\n", cleanErr)
 	}
 
@@ -116,8 +123,8 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// checkAndClean 检查并清理日志文件
-func (l *Logger) checkAndClean() error {
+// checkAndCleanLocked 检查并清理日志文件，调用方必须持有 l.mu
+func (l *Logger) checkAndCleanLocked() error {
 	// 获取当前文件大小
 	fileInfo, err := l.file.Stat()
 	if err != nil {
@@ -166,11 +173,15 @@ func (l *Logger) checkAndClean() error {
 
 // Close 关闭日志文件
 func (l *Logger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.file.Close()
 }
 
 // SetConsoleOutput 设置是否输出到控制台
 func (l *Logger) SetConsoleOutput(enable bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.consoleOutput = enable
 }
 
@@ -275,7 +286,7 @@ func InitLogger() error {
 	if err := os.MkdirAll("./data", 0755); err != nil {
 		return fmt.Errorf("创建数据目录失败: %v", err)
 	}
-	
+
 	// 默认日志文件路径
 	logPath := "./data/clash_statistics.log"
 	// 默认最大日志文件大小 (10MB)
@@ -302,7 +313,7 @@ func InitLoggerWithLevel(logLevel string) error {
 	if err := os.MkdirAll("./data", 0755); err != nil {
 		return fmt.Errorf("创建数据目录失败: %v", err)
 	}
-	
+
 	// 默认日志文件路径
 	logPath := "./data/clash_statistics.log"
 	// 默认最大日志文件大小 (10MB)

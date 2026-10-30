@@ -107,6 +107,48 @@ type GanttEntry struct {
 	TimeSlots [288]byte // 每天288个5分钟时间段，存储活动连接数
 }
 
+// FromClashConnection 将 utils 中采集到的连接转换为数据库存储结构
+func FromClashConnection(conn utils.Connection) Connection {
+	return Connection{
+		ID:                conn.ID,
+		Chain:             conn.Chain,
+		Chains:            conn.Chains,
+		Rule:              conn.Rule,
+		RulePayload:       conn.RulePayload,
+		Download:          conn.Download,
+		Upload:            conn.Upload,
+		SourceIP:          conn.SourceIP,
+		SourcePort:        conn.SourcePort,
+		DestPort:          conn.DestPort,
+		DestIP:            conn.DestIP,
+		StartTime:         conn.StartTime,
+		Network:           conn.Network,
+		ConnectionType:    conn.ConnectionType,
+		SourceIPAddr:      conn.SourceIPAddr,
+		DestinationIP:     conn.DestinationIP,
+		SourcePortNum:     conn.SourcePortNum,
+		DestinationPort:   conn.DestinationPort,
+		Host:              conn.Host,
+		DNSMode:           conn.DNSMode,
+		Uid:               conn.Uid,
+		Process:           conn.Process,
+		ProcessPath:       conn.ProcessPath,
+		SpecialProxy:      conn.SpecialProxy,
+		SpecialRules:      conn.SpecialRules,
+		RemoteDestination: conn.RemoteDestination,
+		DSCP:              conn.DSCP,
+		SniffHost:         conn.SniffHost,
+		InboundIP:         conn.InboundIP,
+		InboundPort:       conn.InboundPort,
+		InboundName:       conn.InboundName,
+		InboundUser:       conn.InboundUser,
+		SourceGeoIP:       conn.SourceGeoIP,
+		DestinationGeoIP:  conn.DestinationGeoIP,
+		SourceIPASN:       conn.SourceIPASN,
+		DestinationIPASN:  conn.DestinationIPASN,
+	}
+}
+
 // parseToTimestamp 将时间字符串转换为 Unix 时间戳
 func parseToTimestamp(timeStr string) (int64, error) {
 	if timeStr == "" {
@@ -154,6 +196,17 @@ func InitDB() (*Database, error) {
 	_, err = db.Exec("PRAGMA synchronous = NORMAL")
 	if err != nil {
 		return nil, fmt.Errorf("设置 synchronous 失败: %v", err)
+	}
+
+	// 采集 goroutine、/refresh 处理器、维护任务都会写库。
+	// SQLite 在多个连接各自持有读快照后再升级为写锁时，会直接返回 SQLITE_BUSY 而不等待，
+	// 因此把连接池限制为单连接，由它串行化所有读写
+	db.SetMaxOpenConns(1)
+
+	// 写冲突时先等待而不是直接报错
+	_, err = db.Exec("PRAGMA busy_timeout = 5000")
+	if err != nil {
+		return nil, fmt.Errorf("设置 busy_timeout 失败: %v", err)
 	}
 
 	_, err = db.Exec("PRAGMA cache_size = -8192") // 使用 8MB 缓存
@@ -209,8 +262,11 @@ func InitDB() (*Database, error) {
 	CREATE INDEX IF NOT EXISTS idx_connections_host ON connections(host);
 	CREATE INDEX IF NOT EXISTS idx_connections_destination_ip ON connections(destination_ip);
 	CREATE INDEX IF NOT EXISTS idx_connections_source_ip ON connections(source_ip);
+	-- start_time 上的索引没有任何查询在使用，历史库中若存在则删除，减少每次写入的索引维护
+	DROP INDEX IF EXISTS idx_connections_start_time;
 	CREATE INDEX IF NOT EXISTS idx_connections_last_seen ON connections(last_seen);
-	CREATE INDEX IF NOT EXISTS idx_connections_start_time ON connections(start_time);
+	CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp);
+	CREATE INDEX IF NOT EXISTS idx_connections_end_timestamp ON connections(end_timestamp);
 	`
 
 	_, err = db.Exec(sqlStmt)
@@ -415,74 +471,13 @@ func (d *Database) Migrate() {
 		if err != nil {
 			log.Error("创建 last_seen 索引失败: %v\n", err)
 		}
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_start_time ON connections(start_time)")
+		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp)")
 		if err != nil {
-			log.Error("创建 start_time 索引失败: %v\n", err)
+			log.Error("创建 start_timestamp 索引失败: %v\n", err)
 		}
 
 		log.Info("成功删除 closed_time 字段\n")
 	}
-}
-
-// SaveConnection 保存连接到数据库
-func (d *Database) SaveConnection(conn Connection) error {
-	chainStr := ""
-	if len(conn.Chain) > 0 {
-		chainStr = strings.Join(conn.Chain, ",")
-	}
-
-	chainsStr := ""
-	if len(conn.Chains) > 0 {
-		chainsStr = strings.Join(conn.Chains, ",")
-	}
-
-	// 解析 start_time 为时间戳（只在第一次产生）
-	startTimestamp := conn.StartTimestamp
-	if startTimestamp == 0 && conn.StartTime != "" {
-		ts, err := parseToTimestamp(conn.StartTime)
-		if err != nil {
-			return fmt.Errorf("解析开始时间失败: %v", err)
-		}
-		startTimestamp = ts
-	}
-
-	// 每次保存时都更新 end_timestamp 为当前时间戳
-	endTimestamp := time.Now().Unix()
-
-	stmt, err := d.db.Prepare(`INSERT OR REPLACE INTO connections (
-		id, network, type, source_ip, destination_ip, source_port, destination_port, 
-		host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
-		remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
-		inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-		upload, download, start_time, start_timestamp, end_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
-		source_real_port, dest_real_ip, dest_real_port, last_seen
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	// 处理可能为 null 的字段
-	sourceGeoIPStr := ""
-	if conn.SourceGeoIP != nil {
-		sourceGeoIPStr = fmt.Sprintf("%v", conn.SourceGeoIP)
-	}
-	destinationGeoIPStr := ""
-	if conn.DestinationGeoIP != nil {
-		destinationGeoIPStr = fmt.Sprintf("%v", conn.DestinationGeoIP)
-	}
-
-	_, err = stmt.Exec(
-		conn.ID, conn.Network, conn.ConnectionType, conn.SourceIPAddr, conn.DestinationIP,
-		conn.SourcePortNum, conn.DestinationPort, conn.Host, conn.DNSMode, conn.Uid,
-		conn.Process, conn.ProcessPath, conn.SpecialProxy, conn.SpecialRules,
-		conn.RemoteDestination, conn.DSCP, conn.SniffHost, conn.InboundIP, conn.InboundPort,
-		conn.InboundName, conn.InboundUser, sourceGeoIPStr, destinationGeoIPStr,
-		conn.SourceIPASN, conn.DestinationIPASN, conn.Upload, conn.Download,
-		conn.StartTime, startTimestamp, endTimestamp, chainStr, chainsStr, conn.Rule, conn.RulePayload, conn.SourceIP, conn.SourcePort,
-		conn.DestIP, conn.DestPort, time.Now().Format("2006-01-02 15:04:05"),
-	)
-	return err
 }
 
 // SaveConnections 保存多个连接到数据库
@@ -493,14 +488,27 @@ func (d *Database) SaveConnections(connections []Connection) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO connections (
+	// 已存在的连接只需更新会变化的字段：计数值、最后一次被看到的时间，
+	// 以及那些首次可能为空、之后才被 sniffer 补全的描述字段。
+	// 用 UPSERT 而不是 INSERT OR REPLACE，避免每次轮询都整行删除重插（会把所有索引一起重写）
+	stmt, err := tx.Prepare(`INSERT INTO connections (
 		id, network, type, source_ip, destination_ip, source_port, destination_port, 
 		host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
 		remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
 		inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
 		upload, download, start_time, start_timestamp, end_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
 		source_real_port, dest_real_ip, dest_real_port, last_seen
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		upload = excluded.upload,
+		download = excluded.download,
+		end_timestamp = excluded.end_timestamp,
+		last_seen = excluded.last_seen,
+		host = CASE WHEN excluded.host != '' THEN excluded.host ELSE connections.host END,
+		sniff_host = CASE WHEN excluded.sniff_host != '' THEN excluded.sniff_host ELSE connections.sniff_host END,
+		destination_ip = CASE WHEN excluded.destination_ip != '' THEN excluded.destination_ip ELSE connections.destination_ip END,
+		chain = CASE WHEN excluded.chain != '' THEN excluded.chain ELSE connections.chain END,
+		rule = CASE WHEN excluded.rule != '' THEN excluded.rule ELSE connections.rule END`)
 	if err != nil {
 		return err
 	}
@@ -556,11 +564,6 @@ func (d *Database) SaveConnections(connections []Connection) error {
 	}
 
 	return tx.Commit()
-}
-
-// GetStats 获取统计信息
-func (d *Database) GetStats() ([]StatsEntry, error) {
-	return d.GetStatsWithTimeRange(0, 0)
 }
 
 // GetStatsWithTimeRange 获取指定时间范围内的统计信息
@@ -884,34 +887,6 @@ func (d *Database) SetConnectionClosedTime(id string) error {
 
 	_, err = stmt.Exec(endTimestamp, lastSeen, id)
 	return err
-}
-
-// UpdateClosedTime 更新连接的关闭时间
-func (d *Database) UpdateClosedTime(id string) error {
-	endTimestamp := time.Now().Unix()
-	stmt, err := d.db.Prepare("UPDATE connections SET end_timestamp=? WHERE id=?")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	result, err := stmt.Exec(endTimestamp, id)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		utils.GetLogger().Warn("警告: 没有找到ID为 %s 的记录\n", id)
-	} else {
-		utils.GetLogger().Info("成功更新 %d 条记录的end_timestamp为 %d\n", rowsAffected, endTimestamp)
-	}
-
-	return nil
 }
 
 // CleanupOldData 清理过期数据

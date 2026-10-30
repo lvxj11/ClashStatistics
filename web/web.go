@@ -98,21 +98,25 @@ func (s *Server) performDatabaseMaintenance() {
 	}
 }
 
+// Handler 返回 HTTP 路由入口
+// 后续若要加鉴权，只需要在返回值上再包一层中间件
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", s.showDashboard)
+	mux.HandleFunc("/host-stats", s.showHostStats)
+	mux.HandleFunc("/sourceip-stats", s.showSourceIPStats)
+	mux.HandleFunc("/online-time", s.showOnlineTime)
+	mux.HandleFunc("/api/stats", s.getStats)
+	mux.HandleFunc("/api/sourceip-stats", s.getSourceIPStats)
+	mux.HandleFunc("/api/gantt", s.getGanttData)
+	mux.HandleFunc("/refresh", s.refreshData)
+
+	return mux
+}
+
 // Start 启动 Web 服务器
 func (s *Server) Start(port string) {
-	// 设置静态文件路由
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("../static/"))))
-
-	// 设置路由
-	http.HandleFunc("/", s.showDashboard)
-	http.HandleFunc("/host-stats", s.showHostStats)
-	http.HandleFunc("/sourceip-stats", s.showSourceIPStats)
-	http.HandleFunc("/online-time", s.showOnlineTime)
-	http.HandleFunc("/api/stats", s.getStats)
-	http.HandleFunc("/api/sourceip-stats", s.getSourceIPStats)
-	http.HandleFunc("/api/gantt", s.getGanttData)
-	http.HandleFunc("/refresh", s.refreshData)
-
 	log := utils.GetLogger()
 	log.Startup("服务器启动在端口 %s\n", port)
 
@@ -125,7 +129,7 @@ func (s *Server) Start(port string) {
 	// 在单独的 goroutine 中定期执行数据库维护任务
 	go s.startDatabaseMaintenance()
 
-	err := http.ListenAndServe(":"+port, nil)
+	err := http.ListenAndServe(":"+port, s.Handler())
 	if err != nil {
 		// 启动失败时，确保错误信息也输出到控制台
 		log.SetConsoleOutput(true)
@@ -176,44 +180,7 @@ func (s *Server) periodicallyRefreshData() {
 		// 转换 utils.Connection 到 database.Connection
 		dbConnections := make([]database.Connection, len(connectionInfo.Connections))
 		for i, conn := range connectionInfo.Connections {
-			dbConnections[i] = database.Connection{
-				ID:                conn.ID,
-				Chain:             conn.Chain,
-				Chains:            conn.Chains,
-				Rule:              conn.Rule,
-				RulePayload:       conn.RulePayload,
-				Download:          conn.Download,
-				Upload:            conn.Upload,
-				SourceIP:          conn.SourceIP,
-				SourcePort:        conn.SourcePort,
-				DestPort:          conn.DestPort,
-				DestIP:            conn.DestIP,
-				StartTime:         conn.StartTime,
-				Network:           conn.Network,
-				ConnectionType:    conn.ConnectionType,
-				SourceIPAddr:      conn.SourceIPAddr,
-				DestinationIP:     conn.DestinationIP,
-				SourcePortNum:     conn.SourcePortNum,
-				DestinationPort:   conn.DestinationPort,
-				Host:              conn.Host,
-				DNSMode:           conn.DNSMode,
-				Uid:               conn.Uid,
-				Process:           conn.Process,
-				ProcessPath:       conn.ProcessPath,
-				SpecialProxy:      conn.SpecialProxy,
-				SpecialRules:      conn.SpecialRules,
-				RemoteDestination: conn.RemoteDestination,
-				DSCP:              conn.DSCP,
-				SniffHost:         conn.SniffHost,
-				InboundIP:         conn.InboundIP,
-				InboundPort:       conn.InboundPort,
-				InboundName:       conn.InboundName,
-				InboundUser:       conn.InboundUser,
-				SourceGeoIP:       conn.SourceGeoIP,
-				DestinationGeoIP:  conn.DestinationGeoIP,
-				SourceIPASN:       conn.SourceIPASN,
-				DestinationIPASN:  conn.DestinationIPASN,
-			}
+			dbConnections[i] = database.FromClashConnection(conn)
 		}
 
 		// 保存当前连接到数据库（每次保存时都会更新closed_time为当前时间）
@@ -315,44 +282,7 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 	// 转换 utils.Connection 到 database.Connection
 	dbConnections := make([]database.Connection, len(connectionInfo.Connections))
 	for i, conn := range connectionInfo.Connections {
-		dbConnections[i] = database.Connection{
-			ID:                conn.ID,
-			Chain:             conn.Chain,
-			Chains:            conn.Chains,
-			Rule:              conn.Rule,
-			RulePayload:       conn.RulePayload,
-			Download:          conn.Download,
-			Upload:            conn.Upload,
-			SourceIP:          conn.SourceIP,
-			SourcePort:        conn.SourcePort,
-			DestPort:          conn.DestPort,
-			DestIP:            conn.DestIP,
-			StartTime:         conn.StartTime,
-			Network:           conn.Network,
-			ConnectionType:    conn.ConnectionType,
-			SourceIPAddr:      conn.SourceIPAddr,
-			DestinationIP:     conn.DestinationIP,
-			SourcePortNum:     conn.SourcePortNum,
-			DestinationPort:   conn.DestinationPort,
-			Host:              conn.Host,
-			DNSMode:           conn.DNSMode,
-			Uid:               conn.Uid,
-			Process:           conn.Process,
-			ProcessPath:       conn.ProcessPath,
-			SpecialProxy:      conn.SpecialProxy,
-			SpecialRules:      conn.SpecialRules,
-			RemoteDestination: conn.RemoteDestination,
-			DSCP:              conn.DSCP,
-			SniffHost:         conn.SniffHost,
-			InboundIP:         conn.InboundIP,
-			InboundPort:       conn.InboundPort,
-			InboundName:       conn.InboundName,
-			InboundUser:       conn.InboundUser,
-			SourceGeoIP:       conn.SourceGeoIP,
-			DestinationGeoIP:  conn.DestinationGeoIP,
-			SourceIPASN:       conn.SourceIPASN,
-			DestinationIPASN:  conn.DestinationIPASN,
-		}
+		dbConnections[i] = database.FromClashConnection(conn)
 	}
 
 	// 保存到数据库
