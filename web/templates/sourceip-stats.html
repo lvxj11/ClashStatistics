@@ -271,7 +271,8 @@
                 this.selectedChains = [];
                 this.startTime = '';
                 this.endTime = '';
-                this.filteredStats = this.stats;
+                // 同 host-stats：时间筛选在服务端完成，清空后需要重新请求
+                this.loadSourceIPStats();
             }
         }
     }

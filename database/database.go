@@ -624,25 +624,29 @@ func (d *Database) SaveConnections(connections []Connection) error {
 // GetStatsWithTimeRange 获取指定时间范围内的统计信息
 // startTimestamp: 起始时间戳（秒），0 表示不限制
 // endTimestamp: 结束时间戳（秒），0 表示不限制
-// 统计基于连接的最后一次被看到的时间（last_seen_timestamp）
+//
+// 一条连接的活动区间是 [start_timestamp, last_seen_timestamp]，只有与给定
+// 时间窗有重叠的连接才计入统计
 func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
-	var whereClause string
 	var args []interface{}
 
-	baseWhere := "(host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != '')"
+	// 必须用括号包起来：baseWhere 自身含 OR，若不加括号，后续 AND 条件
+	// 会因为运算符优先级只作用在 OR 的一侧，导致过滤失效
+	baseWhere := "((host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != ''))"
 
-	if startTimestamp > 0 && endTimestamp > 0 {
-		whereClause = baseWhere + " AND last_seen_timestamp >= ? AND last_seen_timestamp <= ?"
-		args = append(args, startTimestamp, endTimestamp)
-	} else if startTimestamp > 0 {
-		whereClause = baseWhere + " AND last_seen_timestamp >= ?"
+	//（last_seen_timestamp 每次轮询都会被刷新，连接断开后冻结）
+	conditions := []string{baseWhere}
+	if startTimestamp > 0 {
+		// 窗口开始之后仍然活跃过
+		conditions = append(conditions, "last_seen_timestamp >= ?")
 		args = append(args, startTimestamp)
-	} else if endTimestamp > 0 {
-		whereClause = baseWhere + " AND last_seen_timestamp <= ?"
-		args = append(args, endTimestamp)
-	} else {
-		whereClause = baseWhere
 	}
+	if endTimestamp > 0 {
+		// 窗口结束之前已经存在
+		conditions = append(conditions, "start_timestamp <= ?")
+		args = append(args, endTimestamp)
+	}
+	whereClause := strings.Join(conditions, " AND ")
 
 	query := fmt.Sprintf(`
 		SELECT 
@@ -690,7 +694,8 @@ func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]
 	}
 	defer rows.Close()
 
-	var stats []StatsEntry
+	// 初始化为空切片而不是 nil，避免结果为空时 JSON 编码成 null 导致前端报错
+	stats := []StatsEntry{}
 	count := 0
 	for rows.Next() {
 		var entry StatsEntry
@@ -735,7 +740,8 @@ func (d *Database) GetSourceIPStats() ([]StatsEntry, error) {
 	}
 	defer rows.Close()
 
-	var stats []StatsEntry
+	// 同上：空结果返回 [] 而不是 null
+	stats := []StatsEntry{}
 	for rows.Next() {
 		var entry StatsEntry
 		err := rows.Scan(&entry.Target, &entry.Download, &entry.Upload, &entry.Total)
@@ -829,7 +835,8 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 	}
 
 	// 转换为切片
-	var result []GanttEntry
+	// 同上：空结果返回 [] 而不是 null
+	result := []GanttEntry{}
 	for sourceIP, timeSlots := range ganttData {
 		result = append(result, GanttEntry{
 			SourceIP:  sourceIP,
@@ -907,40 +914,6 @@ func isIPAddress(s string) bool {
 	}
 
 	return true
-}
-
-// GetOpenConnectionIDs 获取数据库中所有未关闭的连接ID
-func (d *Database) GetOpenConnectionIDs() ([]string, error) {
-	rows, err := d.db.Query("SELECT id FROM connections WHERE last_seen_timestamp = 0")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		err := rows.Scan(&id)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-
-	return ids, nil
-}
-
-// SetConnectionClosedTime 设置连接的关闭时间
-func (d *Database) SetConnectionClosedTime(id string) error {
-	lastSeen := time.Now().Unix()
-	stmt, err := d.db.Prepare("UPDATE connections SET last_seen_timestamp=? WHERE id=? AND last_seen_timestamp = 0")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	_, err = stmt.Exec(lastSeen, id)
-	return err
 }
 
 // CleanupOldData 清理过期数据

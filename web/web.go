@@ -152,31 +152,6 @@ func (s *Server) periodicallyRefreshData() {
 			continue
 		}
 
-		// 获取当前活跃的连接ID
-		currentActive := make(map[string]bool)
-		for _, conn := range connectionInfo.Connections {
-			currentActive[conn.ID] = true
-		}
-
-		// 获取数据库中所有未关闭的连接ID
-		openConnections, err := s.db.GetOpenConnectionIDs()
-		if err != nil {
-			log.Error("获取未关闭连接ID失败: %v\n", err)
-		} else {
-			// 检查哪些连接在数据库中存在但当前不在活跃列表中，这些连接已经关闭
-			for _, connID := range openConnections {
-				if !currentActive[connID] {
-					// 连接已关闭，标记最后一次被看到的时间
-					err := s.db.SetConnectionClosedTime(connID)
-					if err != nil {
-						log.Error("设置连接关闭时间失败: %v\n", err)
-					} else {
-						log.Info("连接 %s 已关闭\n", connID)
-					}
-				}
-			}
-		}
-
 		// 转换 utils.Connection 到 database.Connection
 		dbConnections := make([]database.Connection, len(connectionInfo.Connections))
 		for i, conn := range connectionInfo.Connections {
@@ -358,7 +333,9 @@ func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTe
 // 输出: Unix 时间戳（秒）
 func parseDateTimeToTimestamp(dateTimeStr string) (int64, error) {
 	layout := "2006-01-02T15:04"
-	t, err := time.Parse(layout, dateTimeStr)
+	// 浏览器 datetime-local 输入里没有时区信息，必须按本地时区解析。
+	// 用 time.Parse 会被当成 UTC，在与 Asia/Shanghai 相差 8 小时的情况下筛选会完全失真
+	t, err := time.ParseInLocation(layout, dateTimeStr, time.Now().Location())
 	if err != nil {
 		return 0, fmt.Errorf("解析时间失败: %w", err)
 	}

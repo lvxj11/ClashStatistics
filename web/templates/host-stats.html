@@ -320,7 +320,9 @@
                 this.selectedChains = [];
                 this.startTime = '';
                 this.endTime = '';
-                this.filteredStats = this.stats;
+                // 时间筛选是在服务端过滤的，清空后必须重新请求，否则 stats 里
+                // 仍是上一次筛选后的结果，看起来就像没有恢复
+                this.loadStats();
             }
         }
     }
