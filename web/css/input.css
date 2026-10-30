@@ -6,10 +6,36 @@
 
 @import "tailwindcss";
 
-/* 只编译用到的主题：页面固定 data-theme="dark" */
+/* 只编译用到的主题：深色为默认，浅色可选；两者的品牌色在下面覆盖 */
 @plugin "daisyui" {
-  themes: dark;
+  themes: dark --default, light;
 }
+
+/* 品牌色：主色取自站点图标的连接拓扑绿（#22c55e / #4ade80），
+ * 深色底贴近图标的 #0b1220。同名覆盖会与内置主题合并，未列出的 token
+ * （语义色 success/warning/error、圆角、边框等）继续沿用 daisyUI 默认值。
+ */
+@plugin "daisyui/theme" {
+  name: "dark";
+  --color-base-100: oklch(17% 0.024 264);
+  --color-base-200: oklch(21% 0.02 264);
+  --color-base-300: oklch(25% 0.018 264);
+  --color-primary: oklch(78% 0.19 149.6);
+  --color-primary-content: oklch(20% 0.06 149.6);
+  --color-accent: oklch(76% 0.12 195);
+  --color-accent-content: oklch(22% 0.05 195);
+}
+
+@plugin "daisyui/theme" {
+  name: "light";
+  --color-primary: oklch(58% 0.16 149.6);
+  --color-primary-content: oklch(98% 0.02 149.6);
+  --color-accent: oklch(66% 0.12 195);
+  --color-accent-content: oklch(24% 0.05 195);
+}
+
+/* dark: 变体跟随 data-theme（主题切换脚本写入），而不是 prefers-color-scheme */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
 /* 类名来源是 Go 模板，需要显式指定扫描范围 */
 @source "../templates/**/*.html";

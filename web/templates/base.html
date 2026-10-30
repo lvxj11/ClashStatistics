@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html data-theme="dark">
+<html lang="zh-CN">
 <head>
     <title>{{.Title}} - Clash Statistics Dashboard</title>
     <meta charset="utf-8">
@@ -7,6 +7,42 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- 样式与脚本全部本地提供，不依赖 CDN，断网也能正常显示 -->
     <link href="/static/app.css" rel="stylesheet" type="text/css" />
+    <script>
+        /* 必须在 <head> 里同步执行：赶在首次绘制前定好主题，否则会闪一下浅色 */
+        (function () {
+            var KEY = 'clash-theme';
+            var root = document.documentElement;
+            var mq = window.matchMedia('(prefers-color-scheme: dark)');
+
+            function read() {
+                try { return localStorage.getItem(KEY); } catch (e) { return null; }
+            }
+            function save(t) {
+                try { localStorage.setItem(KEY, t); } catch (e) {}
+            }
+            function apply(t) {
+                root.dataset.theme = t;
+                root.style.colorScheme = t;
+            }
+            function stored() {
+                var t = read();
+                return t === 'light' || t === 'dark' ? t : null;
+            }
+
+            apply(stored() || (mq.matches ? 'dark' : 'light'));
+
+            /* 没有显式选择过时跟随系统偏好变化 */
+            mq.addEventListener('change', function (e) {
+                if (!stored()) apply(e.matches ? 'dark' : 'light');
+            });
+
+            window.__setTheme = function (t) { apply(t); save(t); };
+            window.__toggleTheme = function () {
+                var next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+                apply(next); save(next);
+            };
+        })();
+    </script>
     <script defer src="/static/alpine.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
@@ -25,30 +61,28 @@
                 transform: translateY(0);
             }
         }
-        
-        .gantt-container {
-            font-family: monospace;
-            line-height: 1.8;
-        }
-        
-        .gantt-cell {
-            width: 15px;
-            height: 20px;
-            border: 1px solid #444;
-        }
-        
-        .gantt-cell-active {
-            background-color: #4CAF50;
-            border-color: #45a049;
-        }
     </style>
 </head>
 <body class="min-h-screen">
     <div class="min-h-screen flex flex-col">
-        <div class="navbar shadow-lg">
-            <div class="flex-1 flex items-end gap-4">
-                <a href="/" class="btn btn-ghost text-xl">Clash Statistics Dashboard</a>
-                <span class="text-xs text-gray-400">v{{.Version}}</span>
+        <div class="navbar min-h-16 px-4 border-b border-base-300 bg-base-100/80 backdrop-blur">
+            <div class="navbar-start gap-3">
+                <img src="/favicon.svg" alt="" class="h-8 w-8 flex-shrink-0" />
+                <a href="/" class="btn btn-ghost px-2 text-lg normal-case">
+                    Clash <span class="text-primary font-semibold">Statistics</span> Dashboard
+                </a>
+                <span class="badge badge-outline badge-sm font-mono">v{{.Version}}</span>
+            </div>
+            <div class="navbar-end">
+                <button type="button" class="btn btn-ghost btn-circle" onclick="window.__toggleTheme()"
+                        aria-label="切换主题" title="切换深/浅色主题">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="hidden dark:block h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.364-6.364l-1.414 1.414M7.05 17.364l-1.414 1.414m12.728 0l-1.414-1.414M7.05 6.636L5.636 5.222" />
+                    </svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="dark:hidden h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                    </svg>
+                </button>
             </div>
         </div>
         
@@ -75,7 +109,7 @@
         
         <footer class="footer footer-center p-4 text-base-content">
             <aside>
-                <p>Clash Statistics Dashboard &copy; 2024</p>
+                <p>Clash Statistics Dashboard &copy; {{.CurrentYear}}</p>
             </aside>
         </footer>
     </div>

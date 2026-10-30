@@ -3,10 +3,20 @@
     <div class="mb-6 flex flex-wrap items-center gap-4">
         <label for="date" class="font-medium">选择日期:</label>
         <input type="date" id="date" x-model="selectedDate" @change="loadGanttChart()" class="input w-auto" />
-        <div class="text-sm text-gray-600">
+        <div class="text-sm opacity-70">
             <span class="font-medium">时区:</span>
             <span>{{.TimeZoneOffset}}</span>
             <span class="text-xs ml-1">({{.TimeZoneName}})</span>
+        </div>
+        
+        <div class="ml-auto flex flex-wrap items-center gap-3 text-xs opacity-70">
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-info/60"></span>1-2</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-info"></span>3-20</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-success"></span>21-50</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-warning"></span>51-150</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-error/80"></span>151-254</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-error"></span>255+</span>
+            <span class="opacity-60">单位：连接数</span>
         </div>
     </div>
     
@@ -22,21 +32,21 @@
     </div>
     
     <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
-        <div class="gantt-container space-y-2">
+        <div class="font-mono leading-relaxed space-y-2">
             <!-- 时间轴 -->
             <div class="flex items-center sticky top-0 bg-base-100 z-10">
                 <div class="w-[200px] flex-shrink-0"></div>
                 <div class="flex-1 relative min-w-[600px]">
                     <!-- 时间轴背景线 -->
                     <div class="absolute inset-0 flex items-center">
-                        <div class="h-px bg-gray-600 w-full"></div>
+                        <div class="h-px bg-base-content/20 w-full"></div>
                     </div>
                     <!-- 小时标记 -->
                     <div class="relative flex w-full">
                         <template x-for="hour in 24" :key="hour">
                             <div class="flex flex-col items-start flex-shrink-0" :style="{ width: (100 / 24) + '%' }">
-                                <div class="text-xs font-medium text-gray-600 mb-1" x-text="formatHour(hour - 1)"></div>
-                                <div class="w-px h-2 bg-gray-500"></div>
+                                <div class="text-xs font-medium opacity-70 mb-1" x-text="formatHour(hour - 1)"></div>
+                                <div class="w-px h-2 bg-base-content/30"></div>
                             </div>
                         </template>
                     </div>
@@ -44,7 +54,7 @@
             </div>
             
             <!-- 虚拟滚动容器 -->
-            <div class="relative" style="height: 600px; overflow-y: auto;" @scroll="handleScroll">
+            <div x-ref="viewport" class="relative h-[600px] max-h-[70vh] overflow-y-auto" @scroll="handleScroll" @resize.window="syncViewportHeight">
                 <!-- 占位容器，用于撑开滚动条 -->
                 <div :style="{ height: (ganttData.length * 24) + 'px' }"></div>
                 
@@ -55,7 +65,7 @@
                             <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium" 
                                  x-text="item.SourceIP || 'Unknown'" 
                                  :title="item.SourceIP || 'Unknown'"></div>
-                            <div class="flex-1 min-w-[600px] h-4 bg-gray-800 rounded-full overflow-hidden relative group">
+                            <div class="flex-1 min-w-[600px] h-4 bg-base-300 rounded-full overflow-hidden relative group">
                                 <!-- 连续的活动时间段 -->
                                 <div class="absolute inset-0 flex">
                                     <template x-for="(slot, slotIndex) in 288" :key="slotIndex">
@@ -64,7 +74,7 @@
                                     </template>
                                 </div>
                                 <!-- 悬停提示 -->
-                                <div class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/80 flex items-center justify-center text-white text-xs rounded-full"
+                                <div class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-base-100/90 backdrop-blur-sm flex items-center justify-center text-base-content text-xs rounded-full"
                                      x-text="item.activeTimeText"></div>
                             </div>
                         </div>
@@ -117,6 +127,8 @@
                         );
                         this.updateVisibleItems();
                         this.loading = false;
+                        // 容器高度要到 DOM 更新后才量得准
+                        this.$nextTick(() => this.syncViewportHeight());
                     })
                     .catch(error => {
                         console.error('加载甘特图失败:', error);
@@ -155,13 +167,23 @@
                 return `在线时间: ${hours}h ${minutes}m, 最大连接数: ${maxConnectionsText}`;
             },
             getSlotColor(connectionCount) {
+                // 返回值必须是模板里能扫到的完整字面量类名，字符串拼出来的类不会进 CSS
                 if (connectionCount === 0) return 'bg-transparent';
-                if (connectionCount <= 2) return 'bg-info';
-                if (connectionCount <= 20) return 'bg-success';
-                if (connectionCount <= 50) return 'bg-success-content';
+                if (connectionCount <= 2) return 'bg-info/60';
+                if (connectionCount <= 20) return 'bg-info';
+                if (connectionCount <= 50) return 'bg-success';
                 if (connectionCount <= 150) return 'bg-warning';
-                if (connectionCount <= 254) return 'bg-warning-content';
-                return 'bg-error-content';
+                if (connectionCount <= 254) return 'bg-error/80';
+                return 'bg-error';
+            },
+            // 容器高度随视口变化（max-h-[70vh]），虚拟滚动窗口要跟着同步
+            syncViewportHeight() {
+                const el = this.$refs.viewport;
+                const h = el ? el.clientHeight : 0;
+                if (h > 0 && h !== this.containerHeight) {
+                    this.containerHeight = h;
+                }
+                this.updateVisibleItems();
             }
         }
     }
