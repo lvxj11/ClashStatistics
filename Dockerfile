@@ -1,5 +1,5 @@
 # 多阶段构建，减小最终镜像大小
-FROM golang:1.25.7-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
@@ -8,7 +8,7 @@ WORKDIR /app
 COPY . .
 
 # 使用纯 Go 构建应用（无需 CGO）
-RUN CGO_ENABLED=0 go mod download && CGO_ENABLED=0 go build -o clash-statistics .
+RUN CGO_ENABLED=0 go mod download && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o clash-statistics .
 
 # 最终镜像
 FROM alpine:3.23
