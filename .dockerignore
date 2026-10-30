@@ -1,0 +1,22 @@
+# 防止本地运行产物、数据和密钥被 COPY 进镜像
+# 注意：data/ 下有 config.ini（含 Clash secret）和 SQLite 数据库
+
+.git
+.github
+.gitignore
+.env
+.env.*
+.idea
+.vscode
+
+# 运行时数据与日志
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# 本地编译产物（同时会被构建二进制 FQ 包含）
+clash-statistics
+clash-statistics-*
+dist/
