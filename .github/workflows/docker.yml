@@ -33,6 +33,8 @@ jobs:
         with:
           # 版本号以 go.mod 为准，避免两处重复维护
           go-version-file: go.mod
+          # 取该版本线下的最新补丁版（例如 1.27.0 -> 1.27.3），无需手动跟进
+          check-latest: true
           cache: true
 
       - name: Check formatting
