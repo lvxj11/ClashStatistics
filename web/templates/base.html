@@ -52,21 +52,26 @@
             </div>
         </div>
         
-        <div class="tabs tabs-box mx-4 mt-4 justify-center">
-            <a href="/host-stats" class="tab {{if eq .CurrentPage "host-stats"}}tab-active{{end}}">
-                Host/IP 统计
-            </a>
-            <a href="/sourceip-stats" class="tab {{if eq .CurrentPage "sourceip-stats"}}tab-active{{end}}">
-                SourceIP 统计
-            </a>
-            <a href="/online-time" class="tab {{if eq .CurrentPage "online-time"}}tab-active{{end}}">
-                SourceIP 在线时间
-            </a>
+        <!-- 标签栏与内容放进同一张卡片，避免"标签是一块、表格是另一块"的割裂感 -->
+        <div class="flex-1 w-full max-w-7xl mx-auto px-4 pt-4 md:px-6 md:pt-6 flex flex-col">
+            <div class="flex-1 flex flex-col bg-base-100 border border-base-300 rounded-box">
+                <div class="tabs tabs-border px-3 pt-2 bg-base-200/40 rounded-t-box">
+                    <a href="/host-stats" class="tab {{if eq .CurrentPage "host-stats"}}tab-active{{end}}">
+                        Host/IP 统计
+                    </a>
+                    <a href="/sourceip-stats" class="tab {{if eq .CurrentPage "sourceip-stats"}}tab-active{{end}}">
+                        SourceIP 统计
+                    </a>
+                    <a href="/online-time" class="tab {{if eq .CurrentPage "online-time"}}tab-active{{end}}">
+                        SourceIP 在线时间
+                    </a>
+                </div>
+                
+                <main class="flex-1 p-4 md:p-6 page-transition">
+                    {{template "content" .}}
+                </main>
+            </div>
         </div>
-        
-        <main class="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 page-transition">
-            {{template "content" .}}
-        </main>
         
         <footer class="footer footer-center p-4 text-base-content">
             <aside>
