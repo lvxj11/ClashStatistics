@@ -1,7 +1,5 @@
 {{define "content"}}
 <div x-data="onlineTime()" x-init="loadGanttChart()">
-    <h2 class="text-2xl font-bold mb-6">SourceIP 在线时间</h2>
-    
     <div class="mb-6 flex flex-wrap items-center gap-4">
         <label for="date" class="font-medium">选择日期:</label>
         <input type="date" id="date" x-model="selectedDate" @change="loadGanttChart()" class="input w-auto" />

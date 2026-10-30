@@ -1,7 +1,5 @@
 {{define "content"}}
 <div x-data="sourceIPStats()" x-init="loadSourceIPStats()">
-    <h2 class="text-2xl font-bold mb-6">流量统计 (按 SourceIP)</h2>
-    
     <div x-show="loading" class="flex justify-center py-8">
         <span class="loading loading-spinner loading-lg"></span>
     </div>
