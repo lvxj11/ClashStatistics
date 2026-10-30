@@ -15,6 +15,9 @@ import (
 //go:embed templates/*
 var templateFiles embed.FS
 
+//go:embed static/*
+var staticFiles embed.FS
+
 // Server 结构体
 type Server struct {
 	config *utils.Config
@@ -111,8 +114,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sourceip-stats", s.getSourceIPStats)
 	mux.HandleFunc("/api/gantt", s.getGanttData)
 	mux.HandleFunc("/refresh", s.refreshData)
+	mux.HandleFunc("/favicon.svg", s.serveFavicon)
 
 	return mux
+}
+
+// serveFavicon 返回站点图标
+func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFiles.ReadFile("static/favicon.svg")
+	if err != nil {
+		http.Error(w, "图标不存在", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(data)
 }
 
 // Start 启动 Web 服务器
