@@ -115,6 +115,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/gantt", s.getGanttData)
 	mux.HandleFunc("/refresh", s.refreshData)
 	mux.HandleFunc("/favicon.svg", s.serveFavicon)
+	// 静态资源（CSS / JS / 图标），全部编译进二进制，随程序分发
+	mux.Handle("/static/", http.FileServer(http.FS(staticFiles)))
 
 	return mux
 }

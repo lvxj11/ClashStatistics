@@ -5,9 +5,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- 样式与脚本全部本地提供，不依赖 CDN，断网也能正常显示 -->
+    <link href="/static/app.css" rel="stylesheet" type="text/css" />
+    <script defer src="/static/alpine.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
         
@@ -52,7 +52,7 @@
             </div>
         </div>
         
-        <div class="tabs tabs-boxed mx-4 mt-4 justify-center">
+        <div class="tabs tabs-box mx-4 mt-4 justify-center">
             <a href="/host-stats" class="tab {{if eq .CurrentPage "host-stats"}}tab-active{{end}}">
                 Host/IP 统计
             </a>

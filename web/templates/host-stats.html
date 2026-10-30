@@ -19,13 +19,13 @@
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="flex-1 min-w-[200px]">
                     <label class="label">
-                        <span class="label-text">SourceIP 筛选</span>
+                        <span>SourceIP 筛选</span>
                     </label>
                     <div class="relative" x-data="{ isOpen: false }">
                         <button 
                             @click="isOpen = !isOpen"
                             @click.outside="isOpen = false"
-                            class="select select-bordered w-full text-left"
+                            class="select w-full text-left"
                         >
                             <span x-text="selectedSourceIPs.length > 0 ? `已选 ${selectedSourceIPs.length} 项` : '选择 SourceIP'"></span>
                         </button>
@@ -68,13 +68,13 @@
                 
                 <div class="flex-1 min-w-[200px]">
                     <label class="label">
-                        <span class="label-text">Chain 筛选</span>
+                        <span>Chain 筛选</span>
                     </label>
                     <div class="relative" x-data="{ isOpen: false }">
                         <button 
                             @click="isOpen = !isOpen"
                             @click.outside="isOpen = false"
-                            class="select select-bordered w-full text-left"
+                            class="select w-full text-left"
                         >
                             <span x-text="selectedChains.length > 0 ? `已选 ${selectedChains.length} 项` : '选择 Chain'"></span>
                         </button>
@@ -117,26 +117,26 @@
 
                 <div class="flex-1 min-w-[200px]">
                     <label class="label">
-                        <span class="label-text">起始时间</span>
+                        <span>起始时间</span>
                     </label>
                     <input 
                         type="datetime-local" 
                         x-model="startTime"
                         @change="loadStats()"
-                        class="input input-bordered w-full"
+                        class="input w-full"
                         step="60"
                     >
                 </div>
 
                 <div class="flex-1 min-w-[200px]">
                     <label class="label">
-                        <span class="label-text">结束时间</span>
+                        <span>结束时间</span>
                     </label>
                     <input 
                         type="datetime-local" 
                         x-model="endTime"
                         @change="loadStats()"
-                        class="input input-bordered w-full"
+                        class="input w-full"
                         step="60"
                     >
                 </div>
@@ -150,7 +150,7 @@
         </div>
         
         <!-- 筛选结果数量提示 -->
-        <div x-show="filteredStats.length !== stats.length" class="mb-4 text-sm text-muted">
+        <div x-show="filteredStats.length !== stats.length" class="mb-4 text-sm opacity-70">
             <span x-text="filteredStats.length"></span> 条结果，共 <span x-text="stats.length"></span> 条记录
         </div>
         

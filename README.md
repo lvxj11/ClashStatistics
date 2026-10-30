@@ -72,15 +72,35 @@
 
 ## 版本信息
 
-当前版本：v0.5.2
+当前版本：v0.6.0
 
 ## 技术栈
 
 - Go 语言
 - SQLite 数据库
-- Tailwind CSS
-- Alpine.js
-- daisyUI
+- Tailwind CSS + daisyUI（**预编译**，运行时不加载 CDN、不需要 Node）
+- Alpine.js（本地提供）
+
+## 前端资源
+
+页面样式基于 Tailwind CSS + daisyUI，但已提前编译成静态文件 `web/static/app.css`，
+Alpine.js 也下载到了 `web/static/alpine.min.js`，两者都随二进制分发：
+
+- 运行时**不访问任何外部 CDN**，断网或 CDN 不可用时页面依然正常显示
+- 容器镜像里不需要 Node，构建和运行都只依赖 Go
+- 打开页面需要拉取的资源从约 1.4MB（含浏览器端实时编译）降到约 145KB
+
+修改模板里的 class 之后，需要重新生成 CSS 并提交（仅此一步需要 Node）：
+
+```bash
+npm install          # 首次
+npm run build:css    # 输入 web/css/input.css，输出 web/static/app.css
+```
+
+## 目录结构
+
+补充：`web/css/` 为样式编译入口，`web/static/` 为编译产物与静态资源，两者都会被
+`//go:embed` 打进二进制。
 
 ## 注意事项
 

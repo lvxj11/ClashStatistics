@@ -1,6 +1,9 @@
 # 环境变量文件
 .env
 
+# Node 依赖（仅用于编译前端样式）
+node_modules/
+
 # 构建产物目录（CI 交叉编译时输出到 dist/）
 dist/
 

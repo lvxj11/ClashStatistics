@@ -1,0 +1,15 @@
+/* Tailwind CSS + daisyUI 的编译入口
+ *
+ * 用法：npm run build:css（或 make css），产物写入 web/static/app.css 并提交。
+ * 页面只加载这份静态 CSS，不引入任何运行时编译器和 CDN。
+ */
+
+@import "tailwindcss";
+
+/* 只编译用到的主题：页面固定 data-theme="dark" */
+@plugin "daisyui" {
+  themes: dark;
+}
+
+/* 类名来源是 Go 模板，需要显式指定扫描范围 */
+@source "../templates/**/*.html";

@@ -4,7 +4,7 @@
     
     <div class="mb-6 flex flex-wrap items-center gap-4">
         <label for="date" class="font-medium">选择日期:</label>
-        <input type="date" id="date" x-model="selectedDate" @change="loadGanttChart()" class="input input-bordered w-auto" />
+        <input type="date" id="date" x-model="selectedDate" @change="loadGanttChart()" class="input w-auto" />
         <div class="text-sm text-gray-600">
             <span class="font-medium">时区:</span>
             <span>{{.TimeZoneOffset}}</span>
