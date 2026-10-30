@@ -1,6 +1,6 @@
 module clash-statistics
 
-go 1.27.0
+go 1.27
 
 require modernc.org/sqlite v1.61.0
 

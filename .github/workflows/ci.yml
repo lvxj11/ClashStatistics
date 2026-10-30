@@ -24,7 +24,8 @@ jobs:
         uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          # 取该版本线下的最新补丁版（例如 1.27.0 -> 1.27.3），无需手动跟进
+          # go.mod 只写主次版本（1.27），这里自动取该版本线下的最新补丁版（1.27.3），
+          # 后续补丁发布无需手动改任何文件
           check-latest: true
           cache: true
 
