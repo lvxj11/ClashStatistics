@@ -34,8 +34,10 @@ type Connection struct {
 	DestIP         string   `json:"dstIP"`
 	StartTime      string   `json:"start"`
 	StartTimestamp int64    `json:"startTimestamp"` // 开始时间戳
-	EndTimestamp   int64    `json:"endTimestamp"`   // 结束时间戳
-	Metadata       Metadata `json:"metadata"`       // 保留原始结构用于解析
+	// 最后一次被看到的时间戳：Clash API 不提供关闭事件，这个值每次轮询刷新，
+	// 连接消失后便冻结在上一次轮询时刻，误差不超过一个采集间隔
+	LastSeenTimestamp int64    `json:"lastSeenTimestamp"`
+	Metadata          Metadata `json:"metadata"` // 保留原始结构用于解析
 	// 从 Metadata 展开的字段（用于数据库存储）
 	Network           string      `json:"-"` // 不从 JSON 解析，而是从 Metadata 映射
 	ConnectionType    string      `json:"-"` // 避免与 Go 关键字冲突
@@ -246,7 +248,9 @@ func InitDB() (*Database, error) {
 			download INTEGER,
 			start_time TEXT,
 			start_timestamp INTEGER DEFAULT 0,
-			end_timestamp INTEGER DEFAULT 0,
+			-- 这条连接最后一次出现在 Clash 返回结果里的时间（秒级时间戳）
+			-- 注意：不是真正的关闭时间，Clash API 不提供关闭事件，这个值每次轮询都会被刷新
+			last_seen_timestamp INTEGER DEFAULT 0,
 			chain TEXT,
 			chains TEXT,
 			rule TEXT,
@@ -254,8 +258,7 @@ func InitDB() (*Database, error) {
 			source_real_ip TEXT,
 			source_real_port TEXT,
 			dest_real_ip TEXT,
-			dest_real_port TEXT,
-			last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+			dest_real_port TEXT
 		);
 	
 	-- 创建索引
@@ -264,9 +267,7 @@ func InitDB() (*Database, error) {
 	CREATE INDEX IF NOT EXISTS idx_connections_source_ip ON connections(source_ip);
 	-- start_time 上的索引没有任何查询在使用，历史库中若存在则删除，减少每次写入的索引维护
 	DROP INDEX IF EXISTS idx_connections_start_time;
-	CREATE INDEX IF NOT EXISTS idx_connections_last_seen ON connections(last_seen);
 	CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp);
-	CREATE INDEX IF NOT EXISTS idx_connections_end_timestamp ON connections(end_timestamp);
 	`
 
 	_, err = db.Exec(sqlStmt)
@@ -478,6 +479,60 @@ func (d *Database) Migrate() {
 
 		log.Info("成功删除 closed_time 字段\n")
 	}
+
+	// 合并 last_seen 与 end_timestamp 为单一的 last_seen_timestamp：
+	// 两者记录的其实是同一件事（这条连接最后一次出现在 Clash 返回结果里的时间），
+	// 只是一个存字符串、一个存整数，合并后不再冗余
+	var lastSeenCount int
+	d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='last_seen'").Scan(&lastSeenCount)
+	if lastSeenCount > 0 {
+		log.Info("开始数据库迁移：合并 last_seen 与 end_timestamp 为 last_seen_timestamp\n")
+
+		var mergedCount int
+		d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='last_seen_timestamp'").Scan(&mergedCount)
+		if mergedCount == 0 {
+			if _, err := d.db.Exec("ALTER TABLE connections ADD COLUMN last_seen_timestamp INTEGER DEFAULT 0"); err != nil {
+				log.Error("添加 last_seen_timestamp 字段失败: %v\n", err)
+				return
+			}
+		}
+
+		// 回填：优先取已有的 end_timestamp，为空时再把 last_seen 字符串转成时间戳
+		if _, err := d.db.Exec(`
+			UPDATE connections
+			SET last_seen_timestamp = CASE
+				WHEN end_timestamp > 0 THEN end_timestamp
+				ELSE CAST(strftime('%s', last_seen) AS INTEGER)
+			END
+			WHERE last_seen_timestamp = 0
+		`); err != nil {
+			log.Error("回填 last_seen_timestamp 失败: %v\n", err)
+			return
+		}
+
+		// 依赖这些字段的索引必须先于字段本身删除
+		if _, err := d.db.Exec("DROP INDEX IF EXISTS idx_connections_last_seen"); err != nil {
+			log.Error("删除 last_seen 索引失败: %v\n", err)
+		}
+		if _, err := d.db.Exec("DROP INDEX IF EXISTS idx_connections_end_timestamp"); err != nil {
+			log.Error("删除 end_timestamp 索引失败: %v\n", err)
+		}
+
+		if _, err := d.db.Exec("ALTER TABLE connections DROP COLUMN last_seen"); err != nil {
+			log.Error("删除 last_seen 字段失败: %v\n", err)
+			return
+		}
+		if _, err := d.db.Exec("ALTER TABLE connections DROP COLUMN end_timestamp"); err != nil {
+			log.Error("删除 end_timestamp 字段失败: %v\n", err)
+			return
+		}
+
+		log.Info("数据库迁移完成：last_seen 与 end_timestamp 已合并\n")
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_last_seen_timestamp ON connections(last_seen_timestamp)"); err != nil {
+		log.Error("创建 last_seen_timestamp 索引失败: %v\n", err)
+	}
 }
 
 // SaveConnections 保存多个连接到数据库
@@ -496,14 +551,13 @@ func (d *Database) SaveConnections(connections []Connection) error {
 		host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
 		remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
 		inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-		upload, download, start_time, start_timestamp, end_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
-		source_real_port, dest_real_ip, dest_real_port, last_seen
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		upload, download, start_time, start_timestamp, last_seen_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
+		source_real_port, dest_real_ip, dest_real_port
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		upload = excluded.upload,
 		download = excluded.download,
-		end_timestamp = excluded.end_timestamp,
-		last_seen = excluded.last_seen,
+		last_seen_timestamp = excluded.last_seen_timestamp,
 		host = CASE WHEN excluded.host != '' THEN excluded.host ELSE connections.host END,
 		sniff_host = CASE WHEN excluded.sniff_host != '' THEN excluded.sniff_host ELSE connections.sniff_host END,
 		destination_ip = CASE WHEN excluded.destination_ip != '' THEN excluded.destination_ip ELSE connections.destination_ip END,
@@ -535,8 +589,9 @@ func (d *Database) SaveConnections(connections []Connection) error {
 			startTimestamp = ts
 		}
 
-		// 每次保存时都更新 end_timestamp 为当前时间戳
-		endTimestamp := time.Now().Unix()
+		// 每次保存时都刷新最后一次被看到的时间：连接一旦关闭就不再出现在结果里，
+		// 这个值便停在上一次轮询的时刻，误差不超过一个采集间隔
+		lastSeenTimestamp := time.Now().Unix()
 
 		// 处理可能为 null 的字段
 		sourceGeoIPStr := ""
@@ -555,8 +610,8 @@ func (d *Database) SaveConnections(connections []Connection) error {
 			conn.RemoteDestination, conn.DSCP, conn.SniffHost, conn.InboundIP, conn.InboundPort,
 			conn.InboundName, conn.InboundUser, sourceGeoIPStr, destinationGeoIPStr,
 			conn.SourceIPASN, conn.DestinationIPASN, conn.Upload, conn.Download,
-			conn.StartTime, startTimestamp, endTimestamp, chainStr, chainsStr, conn.Rule, conn.RulePayload, conn.SourceIP, conn.SourcePort,
-			conn.DestIP, conn.DestPort, time.Now().Format("2006-01-02 15:04:05"),
+			conn.StartTime, startTimestamp, lastSeenTimestamp, chainStr, chainsStr, conn.Rule, conn.RulePayload, conn.SourceIP, conn.SourcePort,
+			conn.DestIP, conn.DestPort,
 		)
 		if err != nil {
 			return err
@@ -569,7 +624,7 @@ func (d *Database) SaveConnections(connections []Connection) error {
 // GetStatsWithTimeRange 获取指定时间范围内的统计信息
 // startTimestamp: 起始时间戳（秒），0 表示不限制
 // endTimestamp: 结束时间戳（秒），0 表示不限制
-// 统计基于连接的结束时间戳（end_timestamp）
+// 统计基于连接的最后一次被看到的时间（last_seen_timestamp）
 func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
 	var whereClause string
 	var args []interface{}
@@ -577,13 +632,13 @@ func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]
 	baseWhere := "(host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != '')"
 
 	if startTimestamp > 0 && endTimestamp > 0 {
-		whereClause = baseWhere + " AND end_timestamp >= ? AND end_timestamp <= ?"
+		whereClause = baseWhere + " AND last_seen_timestamp >= ? AND last_seen_timestamp <= ?"
 		args = append(args, startTimestamp, endTimestamp)
 	} else if startTimestamp > 0 {
-		whereClause = baseWhere + " AND end_timestamp >= ?"
+		whereClause = baseWhere + " AND last_seen_timestamp >= ?"
 		args = append(args, startTimestamp)
 	} else if endTimestamp > 0 {
-		whereClause = baseWhere + " AND end_timestamp <= ?"
+		whereClause = baseWhere + " AND last_seen_timestamp <= ?"
 		args = append(args, endTimestamp)
 	} else {
 		whereClause = baseWhere
@@ -726,7 +781,7 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 				WHEN type = 'Inner' THEN 'Inner'
 				ELSE 'Unknown'
 			END AS source_ip,
-			start_timestamp, end_timestamp
+			start_timestamp, last_seen_timestamp
 		FROM connections
 		WHERE start_timestamp >= ? AND start_timestamp < ?
 		AND ((source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner')
@@ -744,24 +799,24 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 
 	for rows.Next() {
 		var sourceIP string
-		var startTimestamp, endTimestamp int64
+		var startTimestamp, lastSeenTimestamp int64
 
-		err := rows.Scan(&sourceIP, &startTimestamp, &endTimestamp)
+		err := rows.Scan(&sourceIP, &startTimestamp, &lastSeenTimestamp)
 		if err != nil {
 			return nil, err
 		}
 
-		// 如果 end_timestamp 为 0，使用当前时间
-		if endTimestamp == 0 {
-			endTimestamp = time.Now().Unix()
+		// 还没有被刷新过时使用当前时间
+		if lastSeenTimestamp == 0 {
+			lastSeenTimestamp = time.Now().Unix()
 		}
 
 		// 获取或创建时间槽
 		timeSlots := ganttData[sourceIP]
 
-		// 计算开始和结束时间槽序号
+		// 计算开始和最后一次被看到的时间槽序号
 		startSlot := calculateTimeSlotIndex(startTimestamp, dateStart)
-		endSlot := calculateTimeSlotIndex(endTimestamp, dateStart)
+		endSlot := calculateTimeSlotIndex(lastSeenTimestamp, dateStart)
 
 		// 给从开始到结束的所有时间槽加1
 		for i := startSlot; i <= endSlot; i++ {
@@ -856,7 +911,7 @@ func isIPAddress(s string) bool {
 
 // GetOpenConnectionIDs 获取数据库中所有未关闭的连接ID
 func (d *Database) GetOpenConnectionIDs() ([]string, error) {
-	rows, err := d.db.Query("SELECT id FROM connections WHERE end_timestamp = 0")
+	rows, err := d.db.Query("SELECT id FROM connections WHERE last_seen_timestamp = 0")
 	if err != nil {
 		return nil, err
 	}
@@ -877,30 +932,29 @@ func (d *Database) GetOpenConnectionIDs() ([]string, error) {
 
 // SetConnectionClosedTime 设置连接的关闭时间
 func (d *Database) SetConnectionClosedTime(id string) error {
-	endTimestamp := time.Now().Unix()
-	lastSeen := time.Now().Format("2006-01-02 15:04:05")
-	stmt, err := d.db.Prepare("UPDATE connections SET end_timestamp=?, last_seen=? WHERE id=? AND end_timestamp = 0")
+	lastSeen := time.Now().Unix()
+	stmt, err := d.db.Prepare("UPDATE connections SET last_seen_timestamp=? WHERE id=? AND last_seen_timestamp = 0")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(endTimestamp, lastSeen, id)
+	_, err = stmt.Exec(lastSeen, id)
 	return err
 }
 
 // CleanupOldData 清理过期数据
 func (d *Database) CleanupOldData(days int) error {
-	cutoffTime := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+	cutoffTimestamp := time.Now().AddDate(0, 0, -days).Unix()
 
-	// 批量删除过期数据
-	stmt, err := d.db.Prepare("DELETE FROM connections WHERE last_seen < ?")
+	// 批量删除最后一次被看到的时间早于保留期的记录
+	stmt, err := d.db.Prepare("DELETE FROM connections WHERE last_seen_timestamp < ?")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
-	result, err := stmt.Exec(cutoffTime)
+	result, err := stmt.Exec(cutoffTimestamp)
 	if err != nil {
 		return err
 	}

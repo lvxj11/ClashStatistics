@@ -166,7 +166,7 @@ func (s *Server) periodicallyRefreshData() {
 			// 检查哪些连接在数据库中存在但当前不在活跃列表中，这些连接已经关闭
 			for _, connID := range openConnections {
 				if !currentActive[connID] {
-					// 连接已关闭，更新 end_timestamp
+					// 连接已关闭，标记最后一次被看到的时间
 					err := s.db.SetConnectionClosedTime(connID)
 					if err != nil {
 						log.Error("设置连接关闭时间失败: %v\n", err)
