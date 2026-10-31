@@ -50,16 +50,28 @@
 
     <div x-show="!loading && !error && viewRows.length > 0" class="overflow-x-auto" x-cloak>
         <div class="font-mono leading-relaxed space-y-2">
-            <!-- 时间轴 -->
+            <!-- 时间轴：标签每 3 小时一个，整点短刻度、6 小时长刻度，右端补边界 -->
             <div class="flex items-center sticky top-0 bg-base-100 z-10">
                 <div class="w-[200px] flex-shrink-0"></div>
-                <div class="flex-1 relative min-w-[600px]">
+                <div class="flex-1 relative min-w-[600px] border-r border-base-content/20">
                     <div class="absolute inset-0 flex items-center"><div class="h-px bg-base-content/20 w-full"></div></div>
+                    <!-- 查看今天时的"现在"指示 -->
+                    <template x-if="isToday">
+                        <div>
+                            <div class="absolute top-0 bottom-0 w-px bg-primary" :style="{ left: nowPercent + '%' }"></div>
+                            <span class="absolute top-0 -translate-x-1/2 text-[10px] font-medium text-primary whitespace-nowrap"
+                                  :style="{ left: nowPercent + '%' }">现在</span>
+                        </div>
+                    </template>
                     <div class="relative flex w-full">
                         <template x-for="hour in 24" :key="hour">
                             <div class="flex flex-col items-start flex-shrink-0" :style="{ width: (100 / 24) + '%' }">
-                                <div class="text-xs font-medium opacity-70 mb-1" x-text="formatHour(hour - 1)"></div>
-                                <div class="w-px h-2 bg-base-content/30"></div>
+                                <!-- 标签只在整 3 小时显示，其余位置留空但占位，保证刻度不错位 -->
+                                <div class="text-xs font-medium mb-1"
+                                     :class="(hour - 1) % 3 === 0 ? 'opacity-70' : 'opacity-0'"
+                                     x-text="formatHour(hour - 1)"></div>
+                                <div class="w-px"
+                                     :class="(hour - 1) % 6 === 0 ? 'h-2 bg-base-content/40' : 'h-1 bg-base-content/20'"></div>
                             </div>
                         </template>
                     </div>
@@ -80,7 +92,7 @@
                                  :title="item.SourceIP || 'Unknown'"></div>
                             <!-- 悬停只负责取值，不盖住色块 -->
                             <div class="flex-1 min-w-[600px] h-4 bg-base-300 rounded-full overflow-hidden cursor-crosshair"
-                                 :style="{ backgroundImage: item.gradient }"
+                                 :style="{ backgroundImage: item.background }"
                                  @mousemove="updateHover($event, item)"
                                  @click="updateHover($event, item)"
                                  @mouseleave="hideHover()"></div>
@@ -138,12 +150,21 @@
             search: '',
             loading: true,
             error: null,
+            isToday: false,
+            nowPercent: 0,
             hover: { visible: false, x: 0, y: 0, ip: '', time: '', value: '0', summary: '' },
+
+            // 时间网格：整点淡线 + 6 小时重线。作为色条的背景层，画在色块下面
+            gridImage: [
+                'repeating-linear-gradient(to right, var(--grid-minor) 0 1px, transparent 1px calc(100% / 24))',
+                'repeating-linear-gradient(to right, var(--grid-major) 0 1px, transparent 1px calc(100% / 4))'
+            ].join(', '),
 
             loadGanttChart() {
                 this.loading = true;
                 this.error = null;
                 this.visibleItems = [];
+                this.updateNowMarker();
                 fetch('/api/gantt?date=' + this.selectedDate)
                     .then(response => {
                         if (!response.ok) {
@@ -188,6 +209,8 @@
                     item.peak = peak;
                     item.activeTimeText = '在线 ' + hours + 'h ' + minutes + 'm · 峰值 ' + (peak === 255 ? '255+' : peak);
                     item.gradient = this.buildGradient(indexes, values);
+                    // 图层顺序：现在线在最上，其次是色块，网格在最下
+                    item.background = [this.nowLine(), item.gradient, this.gridImage].filter(Boolean).join(', ');
                 });
             },
 
@@ -249,6 +272,37 @@
                 }
 
                 return 'linear-gradient(90deg, ' + stops.join(', ') + ')';
+            },
+
+            // "现在"指示线只在查看今天时出现
+            updateNowMarker() {
+                this.isToday = this.selectedDate === this.todayString();
+                if (!this.isToday) {
+                    this.nowPercent = 0;
+                    return;
+                }
+
+                const parts = this.selectedDate.split('-').map(Number);
+                const dayStart = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0).getTime();
+                const percent = ((Date.now() - dayStart) / 86400000) * 100;
+                this.nowPercent = Math.max(0, Math.min(100, percent));
+            },
+
+            todayString() {
+                const d = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+            },
+
+            // 只在指示线位置画 1px 竖线，其余完全透明
+            nowLine() {
+                if (!this.isToday) {
+                    return '';
+                }
+                const p = this.nowPercent;
+                return 'linear-gradient(to right, transparent 0 calc(' + p + '% - 1px),' +
+                    ' var(--grid-now) calc(' + p + '% - 1px) calc(' + p + '% + 1px),' +
+                    ' transparent calc(' + p + '% + 1px) 100%)';
             },
 
             // 悬停：按鼠标横向位置算出 5 分钟槽，取值后更新浮层

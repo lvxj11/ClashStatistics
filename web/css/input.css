@@ -61,4 +61,9 @@
   --heat-4: var(--color-warning);
   --heat-5: color-mix(in oklab, var(--color-error) 80%, transparent);
   --heat-6: var(--color-error);
+  /* 时间标尺的网格线：整点淡、6 小时重，作为色条的背景层画在色块下面，
+   * 于是没活动的时段透出网格、有活动的地方被色块盖住 */
+  --grid-minor: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  --grid-major: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+  --grid-now: var(--color-primary);
 }
