@@ -1,11 +1,15 @@
 package web
 
 import (
+	"compress/gzip"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"clash-statistics/database"
@@ -112,13 +116,47 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/online-time", s.showOnlineTime)
 	mux.HandleFunc("/api/stats", s.getStats)
 	mux.HandleFunc("/api/sourceip-stats", s.getSourceIPStats)
+	mux.HandleFunc("/api/target-detail", s.getTargetDetail)
+	mux.HandleFunc("/api/sourceip-detail", s.getSourceIPDetail)
 	mux.HandleFunc("/api/gantt", s.getGanttData)
 	mux.HandleFunc("/refresh", s.refreshData)
 	mux.HandleFunc("/favicon.svg", s.serveFavicon)
 	// 静态资源（CSS / JS / 图标），全部编译进二进制，随程序分发
 	mux.Handle("/static/", http.FileServer(http.FS(staticFiles)))
 
-	return mux
+	return gzipMiddleware(mux)
+}
+
+// gzipResponseWriter 把响应体接到 gzip.Writer 上
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	writer *gzip.Writer
+}
+
+func (g gzipResponseWriter) Write(b []byte) (int, error) {
+	return g.writer.Write(b)
+}
+
+// gzipMiddleware 压缩响应体
+// 甘特图这类接口里有大量重复的 0，压缩后体积能差一个数量级；
+// 预编译的 CSS/JS 同样受益，它们本来就要 embed 进二进制发给浏览器
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		zw := gzip.NewWriter(w)
+		defer zw.Close()
+
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		// 压缩后长度变了，原有的 Content-Length 不能留
+		w.Header().Del("Content-Length")
+
+		next.ServeHTTP(gzipResponseWriter{ResponseWriter: w, writer: zw}, r)
+	})
 }
 
 // serveFavicon 返回站点图标
@@ -192,33 +230,67 @@ func (s *Server) showDashboard(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/host-stats", http.StatusMovedPermanently)
 }
 
-// getStats 返回统计信息的 API 端点
+// resolveTimeZoneName 取一个能看懂的时区名
+//
+// time.Local.String() 在没有设置 TZ 环境变量时返回 "Local"，展示出来毫无意义；
+// 而 time.Zone() 给的缩写（如 CST）是有歧义的（中国/古巴/美国中部都叫 CST）。
+// 所以按优先级取：TZ 环境变量 → /etc/localtime 指向的 IANA 名称 → 缩写。
+// 容器里已经设了 TZ=Asia/Shanghai，这里主要改善裸机/开发环境下的显示
+func resolveTimeZoneName() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+
+	// EvalSymlinks 而不是 Readlink：/etc/localtime 指向的名称本身也可能是个别名
+	// （例如 Asia/Chongqing 是 Asia/Shanghai 的链接），解析到底才拿到规范名
+	if target, err := filepath.EvalSymlinks("/etc/localtime"); err == nil {
+		if idx := strings.LastIndex(target, "zoneinfo/"); idx >= 0 {
+			return target[idx+len("zoneinfo/"):]
+		}
+	}
+
+	if name, _ := time.Now().Zone(); name != "" && name != "Local" {
+		return name
+	}
+
+	return time.Now().Location().String()
+}
+
+// parseTimeRange 解析请求里的起始/结束时间（datetime-local 格式）
+func parseTimeRange(w http.ResponseWriter, r *http.Request) (int64, int64, bool) {
+	var startTimestamp, endTimestamp int64
+
+	if startTime := r.URL.Query().Get("startTime"); startTime != "" {
+		ts, err := parseDateTimeToTimestamp(startTime)
+		if err != nil {
+			http.Error(w, "无效的起始时间格式: "+err.Error(), http.StatusBadRequest)
+			return 0, 0, false
+		}
+		startTimestamp = ts
+	}
+
+	if endTime := r.URL.Query().Get("endTime"); endTime != "" {
+		ts, err := parseDateTimeToTimestamp(endTime)
+		if err != nil {
+			http.Error(w, "无效的结束时间格式: "+err.Error(), http.StatusBadRequest)
+			return 0, 0, false
+		}
+		endTimestamp = ts
+	}
+
+	return startTimestamp, endTimestamp, true
+}
+
+// getStats 返回按目标聚合的统计信息
 func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	startTime := r.URL.Query().Get("startTime")
-	endTime := r.URL.Query().Get("endTime")
-
-	var startTimestamp, endTimestamp int64
-	var err error
-
-	if startTime != "" {
-		startTimestamp, err = parseDateTimeToTimestamp(startTime)
-		if err != nil {
-			http.Error(w, "无效的起始时间格式: "+err.Error(), http.StatusBadRequest)
-			return
-		}
+	startTimestamp, endTimestamp, ok := parseTimeRange(w, r)
+	if !ok {
+		return
 	}
 
-	if endTime != "" {
-		endTimestamp, err = parseDateTimeToTimestamp(endTime)
-		if err != nil {
-			http.Error(w, "无效的结束时间格式: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-
-	stats, err := s.db.GetStatsWithTimeRange(startTimestamp, endTimestamp)
+	stats, err := s.db.GetTargetStats(startTimestamp, endTimestamp)
 	if err != nil {
 		http.Error(w, "获取统计数据失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -227,21 +299,79 @@ func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
-// getSourceIPStats 返回SourceIP统计信息的 API 端点
+// getSourceIPStats 返回按客户端（源IP）聚合的统计信息
 func (s *Server) getSourceIPStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	log := utils.GetLogger()
-	log.Info("正在获取SourceIP统计数据...\n")
-	stats, err := s.db.GetSourceIPStats()
-	if err != nil {
-		log.Error("获取SourceIP统计数据失败: %v\n", err)
-		http.Error(w, "获取SourceIP统计数据失败: "+err.Error(), http.StatusInternalServerError)
+	startTimestamp, endTimestamp, ok := parseTimeRange(w, r)
+	if !ok {
 		return
 	}
 
-	log.Info("成功获取 %d 条SourceIP统计数据\n", len(stats))
+	stats, err := s.db.GetSourceIPStatsWithRange(startTimestamp, endTimestamp)
+	if err != nil {
+		http.Error(w, "获取客户端统计数据失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	json.NewEncoder(w).Encode(stats)
+}
+
+// getTargetDetail 返回某个目标（域名/IP）的明细
+func (s *Server) getTargetDetail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		http.Error(w, "缺少 target 参数", http.StatusBadRequest)
+		return
+	}
+
+	startTimestamp, endTimestamp, ok := parseTimeRange(w, r)
+	if !ok {
+		return
+	}
+
+	detail, err := s.db.GetTargetDetail(target, startTimestamp, endTimestamp)
+	if err != nil {
+		http.Error(w, "获取目标明细失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(detail)
+}
+
+// getSourceIPDetail 返回某个客户端（源IP）的明细
+func (s *Server) getSourceIPDetail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	sourceIP := r.URL.Query().Get("ip")
+	if sourceIP == "" {
+		http.Error(w, "缺少 ip 参数", http.StatusBadRequest)
+		return
+	}
+
+	startTimestamp, endTimestamp, ok := parseTimeRange(w, r)
+	if !ok {
+		return
+	}
+
+	detail, err := s.db.GetSourceIPDetail(sourceIP, startTimestamp, endTimestamp)
+	if err != nil {
+		http.Error(w, "获取客户端明细失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(detail)
+}
+
+// ganttPayload 是 /api/gantt 的实际输出
+// 288 个时间槽里大部分是 0（终端通常是断续在线），只传非零槽能显著减小体积，
+// 配合 gzip 效果更明显。SlotIndexes 与 SlotValues 一一对应：第 i 个槽的值为第 i 个值
+type ganttPayload struct {
+	SourceIP    string `json:"SourceIP"`
+	SlotIndexes []int  `json:"SlotIndexes"`
+	SlotValues  []int  `json:"SlotValues"`
 }
 
 // getGanttData 返回甘特图数据的 API 端点
@@ -259,7 +389,23 @@ func (s *Server) getGanttData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(ganttData)
+	payload := make([]ganttPayload, 0, len(ganttData))
+	for _, entry := range ganttData {
+		item := ganttPayload{
+			SourceIP:    entry.SourceIP,
+			SlotIndexes: []int{},
+			SlotValues:  []int{},
+		}
+		for slot, value := range entry.TimeSlots {
+			if value > 0 {
+				item.SlotIndexes = append(item.SlotIndexes, slot)
+				item.SlotValues = append(item.SlotValues, int(value))
+			}
+		}
+		payload = append(payload, item)
+	}
+
+	json.NewEncoder(w).Encode(payload)
 }
 
 // refreshData 刷新数据的 API 端点
@@ -289,32 +435,32 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "数据已刷新"})
 }
 
-// showHostStats 显示Host/IP统计页面
+// showHostStats 显示目标统计页面
 func (s *Server) showHostStats(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, "Host/IP 统计", "host-stats", "host-stats.html")
+	s.renderPage(w, "目标统计", "host-stats", "host-stats.html")
 }
 
-// showSourceIPStats 显示SourceIP统计页面
+// showSourceIPStats 显示客户端统计页面
 func (s *Server) showSourceIPStats(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, "SourceIP 统计", "sourceip-stats", "sourceip-stats.html")
+	s.renderPage(w, "客户端统计", "sourceip-stats", "sourceip-stats.html")
 }
 
-// showOnlineTime 显示SourceIP在线时间页面
+// showOnlineTime 显示在线状态页面
 func (s *Server) showOnlineTime(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, "SourceIP 在线时间", "online-time", "online-time.html")
+	s.renderPage(w, "在线状态", "online-time", "online-time.html")
 }
 
 // renderPage 渲染页面的通用函数
 func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTemplate string) {
-	tmpl, err := template.ParseFS(templateFiles, "templates/base.html", "templates/"+contentTemplate)
+	tmpl, err := template.ParseFS(templateFiles,
+		"templates/base.html", "templates/detail-modal.html", "templates/"+contentTemplate)
 	if err != nil {
 		http.Error(w, "解析模板失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// 获取本地时区信息
-	localLoc := time.Now().Location()
-	timeZoneName := localLoc.String()
+	timeZoneName := resolveTimeZoneName()
 
 	// 计算时区偏移
 	_, offset := time.Now().Zone()

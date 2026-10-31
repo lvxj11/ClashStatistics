@@ -39,3 +39,26 @@
 
 /* 类名来源是 Go 模板，需要显式指定扫描范围 */
 @source "../templates/**/*.html";
+
+/* 明细弹窗：daisyUI 默认把 .modal-box 限制在 32rem，9 列表格放不下，
+ * 所以这里直接放开（未分层样式优先于 daisyUI 与 Tailwind 的分层规则）。
+ * PC 优先：宽屏最多 1600px，窄屏退化为 92vw。
+ */
+.modal-box.modal-box-wide {
+  width: min(1600px, 92vw);
+  max-width: none;
+}
+
+/* 甘特图的热度色带：一行只有 1 个元素、用 linear-gradient 画，
+ * 渐变里没法用 Tailwind 的 bg-info/60 这类类目，所以把分档颜色定义成变量，
+ * 图例和色条共用同一组，避免两处配色跑偏。
+ * 值引用主题变量，深浅主题切换时自动跟着变。
+ */
+:root {
+  --heat-1: color-mix(in oklab, var(--color-info) 60%, transparent);
+  --heat-2: var(--color-info);
+  --heat-3: var(--color-success);
+  --heat-4: var(--color-warning);
+  --heat-5: color-mix(in oklab, var(--color-error) 80%, transparent);
+  --heat-6: var(--color-error);
+}

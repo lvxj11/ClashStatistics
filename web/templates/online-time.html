@@ -1,47 +1,60 @@
 {{define "content"}}
 <div x-data="onlineTime()" x-init="loadGanttChart()">
-    <div class="mb-6 flex flex-wrap items-center gap-4">
-        <label for="date" class="font-medium">选择日期:</label>
-        <input type="date" id="date" x-model="selectedDate" @change="loadGanttChart()" class="input w-auto" />
-        <div class="text-sm opacity-70">
-            <span class="font-medium">时区:</span>
-            <span>{{.TimeZoneOffset}}</span>
-            <span class="text-xs ml-1">({{.TimeZoneName}})</span>
+    <!-- 第一行：筛选控件。标签统一放在控件上方，避免"标签 + 控件"横排时挤在一起 -->
+    <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3">
+        <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium opacity-70">日期</span>
+            <input type="date" x-model="selectedDate" @change="loadGanttChart()" class="input input-sm w-auto" />
         </div>
-        
-        <div class="ml-auto flex flex-wrap items-center gap-3 text-xs opacity-70">
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-info/60"></span>1-2</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-info"></span>3-20</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-success"></span>21-50</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-warning"></span>51-150</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-error/80"></span>151-254</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-error"></span>255+</span>
-            <span class="opacity-60">单位：连接数</span>
+        <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium opacity-70">搜索终端</span>
+            <input type="text" x-model="search" @input="applyView()" placeholder="IP 片段"
+                   class="input input-sm w-40" />
+        </div>
+        <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium opacity-70">排序</span>
+            <select x-model="sortBy" @change="applyView()" class="select select-sm w-36">
+                <option value="ip">按 IP（默认）</option>
+                <option value="online">按在线时长</option>
+                <option value="peak">按峰值连接数</option>
+            </select>
         </div>
     </div>
-    
+
+    <!-- 第二行：左边计数，右边图例，各自成组 -->
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <p class="text-sm opacity-70">
+            <span x-text="viewRows.length"></span> 个终端<span x-show="viewRows.length !== ganttData.length">，共 <span x-text="ganttData.length"></span> 个</span>
+        </p>
+        <div class="flex flex-wrap items-center gap-3 text-xs opacity-70">
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-1)"></span>1-2</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-2)"></span>3-20</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-3)"></span>21-50</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-4)"></span>51-150</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-5)"></span>151-254</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-6)"></span>255+</span>
+            <span class="opacity-60">单位：并发连接数</span>
+        </div>
+    </div>
+
     <div x-show="loading" class="flex justify-center py-8">
         <span class="loading loading-spinner loading-lg"></span>
     </div>
-    
+
     <div x-show="error" class="alert alert-error" x-cloak>
         <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <span x-text="error"></span>
     </div>
-    
-    <div x-show="!loading && !error" class="overflow-x-auto" x-cloak>
+
+    <div x-show="!loading && !error && viewRows.length > 0" class="overflow-x-auto" x-cloak>
         <div class="font-mono leading-relaxed space-y-2">
             <!-- 时间轴 -->
             <div class="flex items-center sticky top-0 bg-base-100 z-10">
                 <div class="w-[200px] flex-shrink-0"></div>
                 <div class="flex-1 relative min-w-[600px]">
-                    <!-- 时间轴背景线 -->
-                    <div class="absolute inset-0 flex items-center">
-                        <div class="h-px bg-base-content/20 w-full"></div>
-                    </div>
-                    <!-- 小时标记 -->
+                    <div class="absolute inset-0 flex items-center"><div class="h-px bg-base-content/20 w-full"></div></div>
                     <div class="relative flex w-full">
                         <template x-for="hour in 24" :key="hour">
                             <div class="flex flex-col items-start flex-shrink-0" :style="{ width: (100 / 24) + '%' }">
@@ -52,38 +65,32 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- 虚拟滚动容器 -->
             <div x-ref="viewport" class="relative h-[600px] max-h-[70vh] overflow-y-auto" @scroll="handleScroll" @resize.window="syncViewportHeight">
                 <!-- 占位容器，用于撑开滚动条 -->
-                <div :style="{ height: (ganttData.length * 24) + 'px' }"></div>
-                
-                <!-- 可见区域 -->
+                <div :style="{ height: (viewRows.length * 24) + 'px' }"></div>
+
+                <!-- 可见区域：每行只有两个元素，色条由渐变一次画完 -->
                 <div class="absolute top-0 left-0 right-0" :style="{ transform: `translateY(${visibleStartIndex * 24}px)` }">
-                    <template x-for="(item, index) in visibleItems" :key="item.SourceIP">
-                        <div class="flex items-center" style="height: 24px;">
-                            <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium" 
-                                 x-text="item.SourceIP || 'Unknown'" 
+                    <template x-for="item in visibleItems" :key="item.SourceIP">
+                        <div class="flex items-center rounded hover:bg-base-200/40" style="height: 24px;">
+                            <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium"
+                                 x-text="item.SourceIP || 'Unknown'"
                                  :title="item.SourceIP || 'Unknown'"></div>
-                            <div class="flex-1 min-w-[600px] h-4 bg-base-300 rounded-full overflow-hidden relative group">
-                                <!-- 连续的活动时间段 -->
-                                <div class="absolute inset-0 flex">
-                                    <template x-for="(slot, slotIndex) in 288" :key="slotIndex">
-                                        <div class="flex-1 h-full" 
-                                             :class="getSlotColor(item.TimeSlots[slotIndex])"></div>
-                                    </template>
-                                </div>
-                                <!-- 悬停提示 -->
-                                <div class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-base-100/90 backdrop-blur-sm flex items-center justify-center text-base-content text-xs rounded-full"
-                                     x-text="item.activeTimeText"></div>
-                            </div>
+                            <!-- 悬停只负责取值，不盖住色块 -->
+                            <div class="flex-1 min-w-[600px] h-4 bg-base-300 rounded-full overflow-hidden cursor-crosshair"
+                                 :style="{ backgroundImage: item.gradient }"
+                                 @mousemove="updateHover($event, item)"
+                                 @click="updateHover($event, item)"
+                                 @mouseleave="hideHover()"></div>
                         </div>
                     </template>
                 </div>
             </div>
         </div>
     </div>
-    
+
     <div x-show="!loading && !error && ganttData.length === 0" class="text-center py-8" x-cloak>
         <div class="alert">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
@@ -92,20 +99,47 @@
             <span>暂无数据</span>
         </div>
     </div>
+
+    <div x-show="!loading && !error && ganttData.length > 0 && viewRows.length === 0" class="text-center py-8" x-cloak>
+        <div class="alert">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span>没有匹配的终端</span>
+        </div>
+    </div>
+
+    <!-- 跟随鼠标的悬停浮层：fixed 定位，不受滚动容器裁剪，也不遮挡色块 -->
+    <div x-show="hover.visible" x-cloak
+         class="pointer-events-none fixed z-50 rounded-lg border border-base-300 bg-base-100 px-3 py-2 shadow-lg"
+         :style="{ left: hover.x + 'px', top: hover.y + 'px' }">
+        <div class="font-mono text-xs opacity-70" x-text="hover.ip"></div>
+        <div class="mt-1 flex items-baseline gap-2 whitespace-nowrap">
+            <span class="font-mono text-xs" x-text="hover.time"></span>
+            <span class="text-xs opacity-70">并发连接数</span>
+            <span class="font-mono text-sm font-semibold" x-text="hover.value"></span>
+        </div>
+        <div class="mt-1 whitespace-nowrap text-xs opacity-70" x-text="hover.summary"></div>
+    </div>
 </div>
 
 <script>
     function onlineTime() {
         return {
             ganttData: [],
-            selectedDate: '{{.CurrentDate}}',
-            loading: true,
-            error: null,
+            viewRows: [],
+            visibleItems: [],
             visibleStartIndex: 0,
             visibleEndIndex: 0,
-            visibleItems: [],
             rowHeight: 24,
             containerHeight: 600,
+            selectedDate: '{{.CurrentDate}}',
+            sortBy: 'ip',
+            search: '',
+            loading: true,
+            error: null,
+            hover: { visible: false, x: 0, y: 0, ip: '', time: '', value: '0', summary: '' },
+
             loadGanttChart() {
                 this.loading = true;
                 this.error = null;
@@ -120,12 +154,7 @@
                     .then(data => {
                         this.ganttData = data || [];
                         this.processData();
-                        this.visibleStartIndex = 0;
-                        this.visibleEndIndex = Math.min(
-                            Math.ceil(this.containerHeight / this.rowHeight) + 5,
-                            this.ganttData.length
-                        );
-                        this.updateVisibleItems();
+                        this.applyView();
                         this.loading = false;
                         // 容器高度要到 DOM 更新后才量得准
                         this.$nextTick(() => this.syncViewportHeight());
@@ -136,46 +165,159 @@
                         this.loading = false;
                     });
             },
+
             processData() {
-                if (!this.ganttData || this.ganttData.length === 0) return;
                 this.ganttData.forEach(item => {
-                    item.activeTimeText = this.getActiveTime(item.TimeSlots);
+                    const indexes = item.SlotIndexes || [];
+                    const values = item.SlotValues || [];
+
+                    // 接口只传非零槽：在线时长就是槽数 × 5 分钟，峰值直接取最大值
+                    const activeMinutes = indexes.length * 5;
+                    const hours = Math.floor(activeMinutes / 60);
+                    const minutes = activeMinutes % 60;
+                    const peak = values.length ? Math.max(...values) : 0;
+
+                    // 展开回 288 长度的数组，悬停时按下标 O(1) 取值
+                    const slots = new Array(288).fill(0);
+                    for (let i = 0; i < indexes.length; i++) {
+                        slots[indexes[i]] = values[i];
+                    }
+
+                    item.slots = slots;
+                    item.onlineMinutes = activeMinutes;
+                    item.peak = peak;
+                    item.activeTimeText = '在线 ' + hours + 'h ' + minutes + 'm · 峰值 ' + (peak === 255 ? '255+' : peak);
+                    item.gradient = this.buildGradient(indexes, values);
                 });
             },
+
+            // 连接数分档对应的颜色，用 CSS 变量以便跟随深浅主题
+            heatColor(value) {
+                if (value <= 0) return 'transparent';
+                if (value <= 2) return 'var(--heat-1)';
+                if (value <= 20) return 'var(--heat-2)';
+                if (value <= 50) return 'var(--heat-3)';
+                if (value <= 150) return 'var(--heat-4)';
+                if (value <= 254) return 'var(--heat-5)';
+                return 'var(--heat-6)';
+            },
+
+            // 把 288 个槽压成若干段：连续且同档的合并，段与段之间补 transparent
+            // 色标。空隙必须显式指定，否则浏览器会在相邻两段之间插值出一条渐变，
+            // 首段之前、末段之后也会沿用首/末段的颜色一直延伸到两端
+            buildGradient(indexes, values) {
+                if (!indexes || indexes.length === 0) {
+                    return '';
+                }
+                const slotPercent = index => (index / 288) * 100;
+
+                // 第一步：合并成段
+                const segments = [];
+                let start = indexes[0];
+                let color = this.heatColor(values[0]);
+
+                for (let k = 1; k <= indexes.length; k++) {
+                    const isEnd = k === indexes.length;
+                    const nextColor = isEnd ? null : this.heatColor(values[k]);
+                    const contiguous = !isEnd && indexes[k] === indexes[k - 1] + 1;
+
+                    if (isEnd || !contiguous || nextColor !== color) {
+                        segments.push({
+                            from: slotPercent(start),
+                            to: slotPercent(indexes[k - 1] + 1),
+                            color: color
+                        });
+                        if (!isEnd) {
+                            start = indexes[k];
+                            color = nextColor;
+                        }
+                    }
+                }
+
+                // 第二步：色块之间、两端都补上 transparent，边界取同一百分比得到硬边
+                const stops = [];
+                let cursor = 0;
+                segments.forEach(segment => {
+                    if (segment.from > cursor) {
+                        stops.push('transparent ' + cursor.toFixed(3) + '% ' + segment.from.toFixed(3) + '%');
+                    }
+                    stops.push(segment.color + ' ' + segment.from.toFixed(3) + '% ' + segment.to.toFixed(3) + '%');
+                    cursor = segment.to;
+                });
+                if (cursor < 100) {
+                    stops.push('transparent ' + cursor.toFixed(3) + '% 100.000%');
+                }
+
+                return 'linear-gradient(90deg, ' + stops.join(', ') + ')';
+            },
+
+            // 悬停：按鼠标横向位置算出 5 分钟槽，取值后更新浮层
+            updateHover(event, item) {
+                const rect = event.currentTarget.getBoundingClientRect();
+                const ratio = rect.width ? (event.clientX - rect.left) / rect.width : 0;
+                const slot = Math.max(0, Math.min(287, Math.floor(ratio * 288)));
+                const value = item.slots ? item.slots[slot] : 0;
+
+                this.hover = {
+                    visible: true,
+                    // 贴着鼠标放，同时避免顶到视口右边
+                    x: Math.min(event.clientX + 14, window.innerWidth - 200),
+                    y: event.clientY + 14,
+                    ip: item.SourceIP || 'Unknown',
+                    time: this.formatSlotTime(slot),
+                    value: value === 255 ? '255+' : String(value),
+                    summary: item.activeTimeText
+                };
+            },
+
+            hideHover() {
+                this.hover.visible = false;
+            },
+
+            formatSlotTime(slot) {
+                const pad = n => String(n).padStart(2, '0');
+                const fmt = minutes => pad(Math.floor(minutes / 60)) + ':' + pad(minutes % 60);
+                const start = slot * 5;
+                return fmt(start) + '–' + fmt(start + 5);
+            },
+
+            // 搜索 + 排序，结果放进 viewRows 供虚拟滚动使用
+            applyView() {
+                const query = this.search.trim().toLowerCase();
+                let rows = this.ganttData;
+
+                if (query) {
+                    rows = rows.filter(item => (item.SourceIP || '').toLowerCase().includes(query));
+                }
+
+                if (this.sortBy === 'online') {
+                    rows = rows.slice().sort((a, b) => (b.onlineMinutes - a.onlineMinutes) || this.compareIP(a, b));
+                } else if (this.sortBy === 'peak') {
+                    rows = rows.slice().sort((a, b) => (b.peak - a.peak) || this.compareIP(a, b));
+                }
+                // sortBy === 'ip' 时保持服务端按 IP 自然排序的结果
+
+                this.viewRows = rows;
+                this.visibleStartIndex = 0;
+                if (this.$refs.viewport) {
+                    this.$refs.viewport.scrollTop = 0;
+                }
+                this.$nextTick(() => this.syncViewportHeight());
+            },
+
+            compareIP(a, b) {
+                return String(a.SourceIP || '').localeCompare(String(b.SourceIP || ''), undefined, { numeric: true });
+            },
+
             handleScroll(event) {
-                const scrollTop = event.target.scrollTop;
-                this.visibleStartIndex = Math.floor(scrollTop / this.rowHeight);
+                this.visibleStartIndex = Math.floor(event.target.scrollTop / this.rowHeight);
                 this.visibleEndIndex = Math.min(
                     this.visibleStartIndex + Math.ceil(this.containerHeight / this.rowHeight) + 5,
-                    this.ganttData.length
+                    this.viewRows.length
                 );
                 this.updateVisibleItems();
             },
-            updateVisibleItems() {
-                this.visibleItems = this.ganttData.slice(this.visibleStartIndex, this.visibleEndIndex);
-            },
-            formatHour(hour) {
-                return String(hour).padStart(2, '0');
-            },
-            getActiveTime(timeSlots) {
-                const activeSlots = timeSlots.filter(slot => slot > 0).length;
-                const activeMinutes = activeSlots * 5;
-                const hours = Math.floor(activeMinutes / 60);
-                const minutes = activeMinutes % 60;
-                const maxConnections = Math.max(...timeSlots);
-                const maxConnectionsText = maxConnections === 255 ? '255+' : maxConnections;
-                return `在线时间: ${hours}h ${minutes}m, 最大连接数: ${maxConnectionsText}`;
-            },
-            getSlotColor(connectionCount) {
-                // 返回值必须是模板里能扫到的完整字面量类名，字符串拼出来的类不会进 CSS
-                if (connectionCount === 0) return 'bg-transparent';
-                if (connectionCount <= 2) return 'bg-info/60';
-                if (connectionCount <= 20) return 'bg-info';
-                if (connectionCount <= 50) return 'bg-success';
-                if (connectionCount <= 150) return 'bg-warning';
-                if (connectionCount <= 254) return 'bg-error/80';
-                return 'bg-error';
-            },
+
             // 容器高度随视口变化（max-h-[70vh]），虚拟滚动窗口要跟着同步
             syncViewportHeight() {
                 const el = this.$refs.viewport;
@@ -183,7 +325,19 @@
                 if (h > 0 && h !== this.containerHeight) {
                     this.containerHeight = h;
                 }
+                this.visibleEndIndex = Math.min(
+                    this.visibleStartIndex + Math.ceil(this.containerHeight / this.rowHeight) + 5,
+                    this.viewRows.length
+                );
                 this.updateVisibleItems();
+            },
+
+            updateVisibleItems() {
+                this.visibleItems = this.viewRows.slice(this.visibleStartIndex, this.visibleEndIndex);
+            },
+
+            formatHour(hour) {
+                return String(hour).padStart(2, '0');
             }
         }
     }

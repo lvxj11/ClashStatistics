@@ -1,0 +1,70 @@
+{{define "detail-modal"}}
+<!-- 两个统计页共用的明细弹窗：数据来自 /api/target-detail 或 /api/sourceip-detail，
+     一行是 客户端/目标 × 线路 × 规则 的一个组合 -->
+<dialog x-ref="detailModal" class="modal" @close="detail.loading = false; detail.error = null">
+    <div class="modal-box modal-box-wide max-h-[85vh] flex flex-col gap-4">
+        <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+                <h3 class="font-semibold break-all" x-text="detail.data ? detail.data.Name : ''"></h3>
+                <p class="text-sm opacity-70" x-text="detail.data ? detail.data.Subtitle : ''"></p>
+            </div>
+            <form method="dialog">
+                <button type="submit" class="btn btn-sm btn-circle btn-ghost" aria-label="关闭">✕</button>
+            </form>
+        </div>
+
+        <div x-show="detail.loading" class="flex justify-center py-6">
+            <span class="loading loading-spinner loading-lg"></span>
+        </div>
+
+        <div x-show="detail.error" class="alert alert-error" x-cloak>
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span x-text="detail.error"></span>
+        </div>
+
+        <div x-show="!detail.loading && !detail.error" class="overflow-auto" x-cloak>
+            <div x-show="detail.data && detail.data.Rows.length === 0" class="text-sm opacity-60">暂无数据</div>
+            <div x-show="detail.data && detail.data.Rows.length > 0" class="rounded-lg border border-base-300">
+                <table class="table table-sm table-pin-rows w-full min-w-[1100px]">
+                    <thead>
+                        <tr>
+                            <th x-text="detail.data ? detail.data.KeyLabel : ''"></th>
+                            <th>线路</th>
+                            <th>规则</th>
+                            <th class="text-right">下载量</th>
+                            <th class="text-right">上传量</th>
+                            <th class="text-right">总计</th>
+                            <th class="text-right">连接数</th>
+                            <th class="text-right">首次访问</th>
+                            <th class="text-right">最近访问</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(row, rowIndex) in (detail.data ? detail.data.Rows : [])" :key="rowIndex">
+                            <tr class="row-hover align-top">
+                                <td class="break-all font-medium" x-text="row.Key"></td>
+                                <td class="break-all text-xs opacity-80" x-text="row.Chain"></td>
+                                <td class="break-all text-xs opacity-80" x-text="row.Rule"></td>
+                                <td class="text-right tabular-nums" x-text="formatBytes(row.Download)"></td>
+                                <td class="text-right tabular-nums" x-text="formatBytes(row.Upload)"></td>
+                                <td class="text-right tabular-nums font-semibold" x-text="formatBytes(row.Total)"></td>
+                                <td class="text-right tabular-nums" x-text="row.Connections"></td>
+                                <td class="text-right tabular-nums whitespace-nowrap" x-text="formatTime(row.FirstSeen)"></td>
+                                <td class="text-right tabular-nums whitespace-nowrap" x-text="formatTime(row.LastSeen)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button type="submit" class="btn btn-sm">关闭</button>
+            </form>
+        </div>
+    </div>
+</dialog>
+{{end}}

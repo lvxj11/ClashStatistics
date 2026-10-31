@@ -1,5 +1,5 @@
 {{define "content"}}
-<div x-data="hostStats()" x-init="loadStats()">
+<div x-data="Object.assign(hostStats(), detailState('target'))" x-init="loadStats()">
     <div x-show="loading" class="flex justify-center py-8">
         <span class="loading loading-spinner loading-lg"></span>
     </div>
@@ -12,107 +12,9 @@
     </div>
     
     <div x-show="!loading && !error" x-cloak>
-        <!-- 筛选区域 -->
+        <!-- 筛选区域：只保留时间，客户端与线路维度下钻到明细里看 -->
         <div class="mb-6 p-4 bg-base-200/60 border border-base-300 rounded-lg">
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div class="flex-1 min-w-[200px]">
-                    <label class="label">
-                        <span>SourceIP 筛选</span>
-                    </label>
-                    <div class="relative" x-data="{ isOpen: false }">
-                        <button 
-                            @click="isOpen = !isOpen"
-                            @click.outside="isOpen = false"
-                            class="select w-full text-left"
-                        >
-                            <span x-text="selectedSourceIPs.length > 0 ? `已选 ${selectedSourceIPs.length} 项` : '选择 SourceIP'"></span>
-                        </button>
-                        
-                        <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                            <div class="p-2">
-                                <label 
-                                    class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
-                                    @click.stop="toggleAll"
-                                >
-                                    <div class="flex items-center justify-center w-5 h-5 border rounded"
-                                         :class="isAllSelected ? 'bg-primary border-primary' : 'border-base-content/30'">
-                                        <svg x-show="isAllSelected" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-primary-content" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-                                        </svg>
-                                    </div>
-                                    <span class="text-sm font-medium">全选</span>
-                                </label>
-                                <template x-for="sourceIP in uniqueSourceIPs" :key="sourceIP">
-                                    <label 
-                                        class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
-                                        @click.stop="toggleSourceIP(sourceIP)"
-                                    >
-                                        <div class="flex items-center justify-center w-5 h-5 border rounded"
-                                             :class="selectedSourceIPs.includes(sourceIP) ? 'bg-primary border-primary' : 'border-base-content/30'">
-                                            <svg x-show="selectedSourceIPs.includes(sourceIP)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-primary-content" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-                                            </svg>
-                                        </div>
-                                        <span class="text-sm" x-text="sourceIP"></span>
-                                    </label>
-                                </template>
-                                <template x-if="uniqueSourceIPs.length === 0">
-                                    <div class="p-2 text-sm text-base-content/60">暂无可用选项</div>
-                                </template>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="flex-1 min-w-[200px]">
-                    <label class="label">
-                        <span>Chain 筛选</span>
-                    </label>
-                    <div class="relative" x-data="{ isOpen: false }">
-                        <button 
-                            @click="isOpen = !isOpen"
-                            @click.outside="isOpen = false"
-                            class="select w-full text-left"
-                        >
-                            <span x-text="selectedChains.length > 0 ? `已选 ${selectedChains.length} 项` : '选择 Chain'"></span>
-                        </button>
-                        
-                        <div x-show="isOpen" x-transition class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                            <div class="p-2">
-                                <label 
-                                    class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer border-b border-base-200 mb-2"
-                                    @click.stop="toggleAllChains"
-                                >
-                                    <div class="flex items-center justify-center w-5 h-5 border rounded"
-                                         :class="isAllChainsSelected ? 'bg-primary border-primary' : 'border-base-content/30'">
-                                        <svg x-show="isAllChainsSelected" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-primary-content" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-                                        </svg>
-                                    </div>
-                                    <span class="text-sm font-medium">全选</span>
-                                </label>
-                                <template x-for="chain in uniqueChains" :key="chain">
-                                    <label 
-                                        class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
-                                        @click.stop="toggleChain(chain)"
-                                    >
-                                        <div class="flex items-center justify-center w-5 h-5 border rounded"
-                                             :class="selectedChains.includes(chain) ? 'bg-primary border-primary' : 'border-base-content/30'">
-                                            <svg x-show="selectedChains.includes(chain)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-primary-content" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-                                            </svg>
-                                        </div>
-                                        <span class="text-sm" x-text="chain"></span>
-                                    </label>
-                                </template>
-                                <template x-if="uniqueChains.length === 0">
-                                    <div class="p-2 text-sm text-base-content/60">暂无可用选项</div>
-                                </template>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="flex-1 min-w-[200px]">
                     <label class="label">
                         <span>起始时间</span>
@@ -140,41 +42,50 @@
                 </div>
             </div>
             
-            <div x-show="selectedSourceIPs.length > 0 || selectedChains.length > 0 || startTime || endTime" class="flex items-center gap-2 mt-4">
+            <div x-show="startTime || endTime" class="flex items-center gap-2 mt-4">
                 <button @click="clearFilters" class="btn btn-sm btn-outline">
                     清除筛选
                 </button>
             </div>
         </div>
         
-        <!-- 筛选结果数量提示 -->
-        <div x-show="filteredStats.length !== stats.length" class="mb-4 text-sm opacity-70">
-            <span x-text="filteredStats.length"></span> 条结果，共 <span x-text="stats.length"></span> 条记录
+        <div class="mb-4 text-sm opacity-70 flex flex-wrap items-center gap-2">
+            <span><span x-text="stats.length"></span> 个目标</span>
+            <span class="opacity-50">·</span>
+            <span>点击任意一行查看该目标的客户端与线路明细</span>
         </div>
         
         <div class="overflow-auto rounded-lg border border-base-300">
-            <table class="table table-zebra table-pin-rows w-full min-w-[760px]">
+            <table class="table table-zebra table-pin-rows w-full min-w-[940px]">
                 <thead>
                     <tr>
                         <th class="w-16 text-center">排名</th>
-                        <th>Host/IP</th>
-                        <th>SourceIP</th>
-                        <th>Chain</th>
+                        <th>目标</th>
+                        <th class="text-right">连接数</th>
+                        <th class="text-right">客户端数</th>
+                        <th class="text-right">线路数</th>
                         <th class="text-right">下载量</th>
                         <th class="text-right">上传量</th>
                         <th class="text-right">总计</th>
+                        <th class="text-right">最近访问</th>
+                        <th class="w-20 text-center">明细</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="(item, index) in filteredStats" :key="index">
-                        <tr class="row-hover">
+                    <template x-for="(item, index) in stats" :key="item.Target">
+                        <tr class="row-hover cursor-pointer" @click="openDetail(item.Target)">
                             <td class="text-center" :class="index < 3 ? 'font-bold text-primary' : 'opacity-60'" x-text="index + 1"></td>
-                            <td x-text="item.Target"></td>
-                            <td x-text="item.SourceIP"></td>
-                            <td><span class="badge badge-sm badge-outline max-w-[20rem] truncate" :title="item.Chain" x-text="item.Chain"></span></td>
+                            <td class="break-all font-medium" x-text="item.Target"></td>
+                            <td class="text-right tabular-nums" x-text="item.Connections"></td>
+                            <td class="text-right tabular-nums" x-text="item.Peers"></td>
+                            <td class="text-right tabular-nums" x-text="item.Chains"></td>
                             <td class="text-right tabular-nums" x-text="formatBytes(item.Download)"></td>
                             <td class="text-right tabular-nums" x-text="formatBytes(item.Upload)"></td>
                             <td class="text-right tabular-nums font-semibold" x-text="formatBytes(item.Total)"></td>
+                            <td class="text-right tabular-nums whitespace-nowrap" x-text="formatTime(item.LastSeen)"></td>
+                            <td class="text-center">
+                                <button class="btn btn-xs btn-ghost" @click.stop="openDetail(item.Target)">详情</button>
+                            </td>
                         </tr>
                     </template>
                 </tbody>
@@ -182,7 +93,7 @@
         </div>
     </div>
     
-    <div x-show="!loading && !error && filteredStats.length === 0" class="text-center py-8" x-cloak>
+    <div x-show="!loading && !error && stats.length === 0" class="text-center py-8" x-cloak>
         <div class="alert">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -190,31 +101,18 @@
             <span>暂无数据</span>
         </div>
     </div>
+    
+    {{template "detail-modal" .}}
 </div>
 
 <script>
     function hostStats() {
         return {
             stats: [],
-            filteredStats: [],
-            selectedSourceIPs: [],
-            uniqueSourceIPs: [],
-            selectedChains: [],
-            uniqueChains: [],
             loading: true,
             error: null,
             startTime: '',
             endTime: '',
-            
-            get isAllSelected() {
-                return this.uniqueSourceIPs.length > 0 && 
-                       this.selectedSourceIPs.length === this.uniqueSourceIPs.length;
-            },
-            
-            get isAllChainsSelected() {
-                return this.uniqueChains.length > 0 && 
-                       this.selectedChains.length === this.uniqueChains.length;
-            },
             
             loadStats() {
                 this.loading = true;
@@ -233,9 +131,6 @@
                     .then(response => response.json())
                     .then(data => {
                         this.stats = data;
-                        this.filteredStats = data;
-                        this.extractUniqueSourceIPs();
-                        this.extractUniqueChains();
                         this.loading = false;
                     })
                     .catch(error => {
@@ -245,81 +140,10 @@
                     });
             },
             
-            extractUniqueSourceIPs() {
-                const sourceIPSet = new Set();
-                this.stats.forEach(item => {
-                    if (item.SourceIP && item.SourceIP !== 'Unknown') {
-                        sourceIPSet.add(item.SourceIP);
-                    }
-                });
-                this.uniqueSourceIPs = Array.from(sourceIPSet).sort();
-            },
-            
-            extractUniqueChains() {
-                const chainSet = new Set();
-                this.stats.forEach(item => {
-                    if (item.Chain && item.Chain !== 'Unknown') {
-                        chainSet.add(item.Chain);
-                    }
-                });
-                this.uniqueChains = Array.from(chainSet).sort();
-            },
-            
-            toggleAll() {
-                if (this.isAllSelected) {
-                    this.selectedSourceIPs = [];
-                } else {
-                    this.selectedSourceIPs = [...this.uniqueSourceIPs];
-                }
-                this.filterStats();
-            },
-            
-            toggleSourceIP(sourceIP) {
-                const index = this.selectedSourceIPs.indexOf(sourceIP);
-                if (index > -1) {
-                    this.selectedSourceIPs.splice(index, 1);
-                } else {
-                    this.selectedSourceIPs.push(sourceIP);
-                }
-                this.filterStats();
-            },
-            
-            toggleAllChains() {
-                if (this.isAllChainsSelected) {
-                    this.selectedChains = [];
-                } else {
-                    this.selectedChains = [...this.uniqueChains];
-                }
-                this.filterStats();
-            },
-            
-            toggleChain(chain) {
-                const index = this.selectedChains.indexOf(chain);
-                if (index > -1) {
-                    this.selectedChains.splice(index, 1);
-                } else {
-                    this.selectedChains.push(chain);
-                }
-                this.filterStats();
-            },
-            
-            filterStats() {
-                this.filteredStats = this.stats.filter(item => {
-                    const matchSourceIP = this.selectedSourceIPs.length === 0 || 
-                                          this.selectedSourceIPs.includes(item.SourceIP);
-                    const matchChain = this.selectedChains.length === 0 || 
-                                      this.selectedChains.includes(item.Chain);
-                    return matchSourceIP && matchChain;
-                });
-            },
-            
             clearFilters() {
-                this.selectedSourceIPs = [];
-                this.selectedChains = [];
                 this.startTime = '';
                 this.endTime = '';
-                // 时间筛选是在服务端过滤的，清空后必须重新请求，否则 stats 里
-                // 仍是上一次筛选后的结果，看起来就像没有恢复
+                // 时间筛选是服务端做的，清空后必须重新请求
                 this.loadStats();
             }
         }

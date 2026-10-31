@@ -65,7 +65,7 @@
 </head>
 <body class="min-h-screen">
     <div class="min-h-screen flex flex-col">
-        <div class="navbar min-h-16 px-4 border-b border-base-300 bg-base-100/80 backdrop-blur">
+        <div class="navbar min-h-16 px-4 border-b border-base-300 bg-base-100">
             <div class="navbar-start gap-3">
                 <img src="/favicon.svg" alt="" class="h-8 w-8 flex-shrink-0" />
                 <a href="/" class="btn btn-ghost px-2 text-lg normal-case">
@@ -73,7 +73,13 @@
                 </a>
                 <span class="badge badge-outline badge-sm font-mono">v{{.Version}}</span>
             </div>
-            <div class="navbar-end">
+            <div class="navbar-end gap-3">
+                <!-- 服务端时区：所有页面的时间都按它解释，放在这里比塞进页面工具栏更清静 -->
+                <span class="hidden sm:inline-flex items-baseline gap-1 text-xs opacity-60" title="服务端时区">
+                    <span>时区</span>
+                    <span>{{.TimeZoneName}}</span>
+                    <span class="font-mono">({{.TimeZoneOffset}})</span>
+                </span>
                 <button type="button" class="btn btn-ghost btn-circle" onclick="window.__toggleTheme()"
                         aria-label="切换主题" title="切换深/浅色主题">
                     <svg xmlns="http://www.w3.org/2000/svg" class="hidden dark:block h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -90,14 +96,17 @@
         <div class="flex-1 w-full max-w-[1920px] mx-auto px-4 pt-4 md:px-6 md:pt-6 flex flex-col">
             <div class="flex-1 flex flex-col bg-base-100 border border-base-300 rounded-box">
                 <div class="tabs tabs-border px-3 pt-2 bg-base-200/40 rounded-t-box">
-                    <a href="/host-stats" class="tab {{if eq .CurrentPage "host-stats"}}tab-active{{end}}">
-                        Host/IP 统计
+                    <a href="/host-stats" title="按访问的目标（域名/IP）聚合，点开看每个客户端与线路的用量"
+                       class="tab {{if eq .CurrentPage "host-stats"}}tab-active{{end}}">
+                        目标统计
                     </a>
-                    <a href="/sourceip-stats" class="tab {{if eq .CurrentPage "sourceip-stats"}}tab-active{{end}}">
-                        SourceIP 统计
+                    <a href="/sourceip-stats" title="按客户端（源IP）聚合，点开看它访问了哪些目标"
+                       class="tab {{if eq .CurrentPage "sourceip-stats"}}tab-active{{end}}">
+                        客户端统计
                     </a>
-                    <a href="/online-time" class="tab {{if eq .CurrentPage "online-time"}}tab-active{{end}}">
-                        SourceIP 在线时间
+                    <a href="/online-time" title="按天展示每个客户端的在线状态（由存活连接体现）"
+                       class="tab {{if eq .CurrentPage "online-time"}}tab-active{{end}}">
+                        在线状态
                     </a>
                 </div>
                 
@@ -124,6 +133,53 @@
             let exp = Math.min(Math.floor(Math.log(bytes) / Math.log(unit)), units.length-1);
             const size = bytes / Math.pow(unit, exp);
             return size.toFixed(2) + ' ' + units[exp];
+        }
+        
+        // 时间戳（Unix 秒）转成本地时间的 MM-DD HH:mm；0 表示未知
+        function formatTime(timestamp) {
+            if (!timestamp) {
+                return '-';
+            }
+            const d = new Date(timestamp * 1000);
+            const pad = n => String(n).padStart(2, '0');
+            return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+        
+        // 明细弹窗的公共状态与行为：两个统计页共用同一份弹窗模板，
+        // kind 决定打哪个接口、用哪个查询参数名
+        function detailState(kind) {
+            const endpoint = kind === 'target' ? '/api/target-detail' : '/api/sourceip-detail';
+            const param = kind === 'target' ? 'target' : 'ip';
+            return {
+                detail: { loading: false, error: null, data: null },
+                openDetail(name) {
+                    this.detail = { loading: true, error: null, data: null };
+                    if (this.$refs.detailModal && !this.$refs.detailModal.open) {
+                        this.$refs.detailModal.showModal();
+                    }
+                    const params = new URLSearchParams();
+                    params.append(param, name);
+                    if (this.startTime) {
+                        params.append('startTime', this.startTime);
+                    }
+                    if (this.endTime) {
+                        params.append('endTime', this.endTime);
+                    }
+                    fetch(endpoint + '?' + params.toString())
+                        .then(response => response.json())
+                        .then(data => {
+                            this.detail = { loading: false, error: null, data: data };
+                        })
+                        .catch(error => {
+                            this.detail = { loading: false, error: '加载明细失败: ' + error.message, data: null };
+                        });
+                },
+                closeDetail() {
+                    if (this.$refs.detailModal) {
+                        this.$refs.detailModal.close();
+                    }
+                }
+            };
         }
     </script>
 </body>

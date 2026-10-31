@@ -9,10 +9,10 @@
 - 网页界面展示统计数据
 - 数据自动保存到 SQLite 数据库
 - 支持自定义配置
-- 按 Host/IP 统计流量数据
-- 按 SourceIP 统计流量数据
-- SourceIP 在线时间分析（甘特图）
-- SourceIP 筛选功能，支持多 IP 筛选
+- 目标统计：按访问的目标（域名/IP）聚合，点开看每个客户端 × 线路 × 规则 的用量明细
+- 客户端统计：按客户端（源IP）聚合，点开看它访问了哪些目标、走的哪条线路与命中的规则
+- 在线状态：按天展示每个客户端的在线情况（由存活连接体现）
+- 统计与筛选都在服务端完成，支持按时间范围查询
 - 深浅两套主题，右上角一键切换并记忆选择（默认跟随系统偏好）
 - 响应式设计，适配各种屏幕尺寸
 - 实时数据刷新和 API 刷新功能
@@ -62,18 +62,22 @@
 
 ## API 接口
 
-- `/` - 重定向到 Host/IP 统计页面
-- `/host-stats` - Host/IP 统计页面
-- `/sourceip-stats` - SourceIP 统计页面
-- `/online-time` - SourceIP 在线时间页面
-- `/api/stats` - 返回 Host/IP 统计数据的 JSON 数据
-- `/api/sourceip-stats` - 返回 SourceIP 统计数据的 JSON 数据
-- `/api/gantt` - 返回在线时间甘特图数据的 JSON 数据
+- `/` - 重定向到目标统计页面
+- `/host-stats` - 目标统计页面
+- `/sourceip-stats` - 客户端统计页面
+- `/online-time` - 在线状态页面
+- `/api/stats` - 按目标（域名/IP）聚合的统计数据，支持 `startTime` / `endTime`
+- `/api/sourceip-stats` - 按客户端（源IP）聚合的统计数据，支持 `startTime` / `endTime`
+- `/api/target-detail` - 某个目标的明细（客户端 × 线路 × 规则 的组合逐条列出），参数 `target`
+- `/api/sourceip-detail` - 某个客户端的明细（目标 × 线路 × 规则 的组合逐条列出），参数 `ip`
+- `/api/gantt` - 返回在线状态甘特图数据的 JSON 数据，参数 `date`
 - `/refresh` - 手动刷新数据
+
+`startTime` / `endTime` 均为 `datetime-local` 格式（`2006-01-02T15:04`）并按本地时区解析。
 
 ## 版本信息
 
-当前版本：v0.7.0
+当前版本：v0.8.0
 
 ## 技术栈
 

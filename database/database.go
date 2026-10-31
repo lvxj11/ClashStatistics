@@ -93,14 +93,82 @@ type Metadata struct {
 	DestinationIPASN  string      `json:"destinationIPASN"`
 }
 
-// StatsEntry 表示统计条目
+// StatsEntry 表示统计条目（按目标或按客户端聚合后的结果）
 type StatsEntry struct {
-	Target   string // host 或 destinationIP
-	SourceIP string // 源IP地址
-	Chain    string // 代理链第一段
-	Download int64
-	Upload   int64
-	Total    int64
+	Target      string // host/destinationIP，或聚合源IP时的客户端 IP
+	Download    int64
+	Upload      int64
+	Total       int64
+	Connections int64 // 连接条数
+	Peers       int64 // 对侧维度的去重数量：按目标聚合时是客户端数，按客户端聚合时是访问目标数
+	Chains      int64 // 出现过的线路数
+	FirstSeen   int64 // 最早起始时间（Unix 秒，0 表示未知）
+	LastSeen    int64 // 最近一次被观测到的时间（Unix 秒，0 表示未知）
+}
+
+// DetailRow 明细里的一行：客户端/目标 × 线路 × 规则 的组合
+type DetailRow struct {
+	Key         string // 看目标的明细时是客户端，看客户端的明细时是目标
+	Chain       string
+	Rule        string
+	Download    int64
+	Upload      int64
+	Total       int64
+	Connections int64
+	FirstSeen   int64
+	LastSeen    int64
+}
+
+// DetailResponse 明细弹窗的数据
+type DetailResponse struct {
+	Name     string      // 明细对象，如目标名或客户端 IP
+	Subtitle string      // 副标题，如"共 3 个客户端、2 条线路"
+	KeyLabel string      // 第一列表头：客户端 或 目标
+	Rows     []DetailRow // 空切片而不是 nil，避免编码成 null
+}
+
+// 聚合维度表达式：必须与明细查询里用的是同一套，否则点开看到的量和行上的量对不上
+const (
+	targetExpr = `CASE
+			WHEN host IS NOT NULL AND host != '' THEN host
+			WHEN destination_ip IS NOT NULL AND destination_ip != '' THEN destination_ip
+			ELSE 'Unknown'
+		END`
+	sourceIPExpr = `CASE
+			WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
+			WHEN type = 'Inner' THEN 'Inner'
+			ELSE 'Unknown'
+		END`
+	chainExpr = `CASE
+			WHEN chain IS NOT NULL AND chain != '' THEN chain
+			ELSE 'Unknown'
+		END`
+	ruleExpr = `CASE
+			WHEN rule IS NOT NULL AND rule != '' THEN rule
+			ELSE '-'
+		END`
+	// start_timestamp 默认为 0，直接 MIN 会得到 1970 年，这里先把它变成 NULL（SQLite 的 MIN/MAX 忽略 NULL）
+	firstSeenExpr = `COALESCE(MIN(CASE WHEN start_timestamp > 0 THEN start_timestamp END), 0)`
+	lastSeenExpr  = `COALESCE(MAX(NULLIF(last_seen_timestamp, 0)), 0)`
+)
+
+// buildTimeWindow 生成时间窗条件
+// （last_seen_timestamp 每次轮询都会被刷新，连接断开后冻结）
+// 一条连接的活动区间是 [start_timestamp, last_seen_timestamp]，只有与给定时间窗有重叠的连接才计入统计
+func buildTimeWindow(startTimestamp, endTimestamp int64) (string, []interface{}) {
+	var args []interface{}
+	conditions := []string{}
+	if startTimestamp > 0 {
+		// 窗口开始之后仍然活跃过
+		conditions = append(conditions, "last_seen_timestamp >= ?")
+		args = append(args, startTimestamp)
+	}
+	if endTimestamp > 0 {
+		// 窗口结束之前已经存在
+		conditions = append(conditions, "start_timestamp <= ?")
+		args = append(args, endTimestamp)
+	}
+	return strings.Join(conditions, " AND "), args
 }
 
 // GanttEntry 表示甘特图条目
@@ -621,72 +689,185 @@ func (d *Database) SaveConnections(connections []Connection) error {
 	return tx.Commit()
 }
 
-// GetStatsWithTimeRange 获取指定时间范围内的统计信息
-// startTimestamp: 起始时间戳（秒），0 表示不限制
-// endTimestamp: 结束时间戳（秒），0 表示不限制
-//
-// 一条连接的活动区间是 [start_timestamp, last_seen_timestamp]，只有与给定
-// 时间窗有重叠的连接才计入统计
-func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
-	var args []interface{}
-
+// GetTargetStats 按目标（域名/IP）聚合的统计信息
+// startTimestamp / endTimestamp 为 0 表示不限制该侧
+func (d *Database) GetTargetStats(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
 	// 必须用括号包起来：baseWhere 自身含 OR，若不加括号，后续 AND 条件
 	// 会因为运算符优先级只作用在 OR 的一侧，导致过滤失效
 	baseWhere := "((host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != ''))"
+	timeWhere, args := buildTimeWindow(startTimestamp, endTimestamp)
 
-	//（last_seen_timestamp 每次轮询都会被刷新，连接断开后冻结）
-	conditions := []string{baseWhere}
-	if startTimestamp > 0 {
-		// 窗口开始之后仍然活跃过
-		conditions = append(conditions, "last_seen_timestamp >= ?")
-		args = append(args, startTimestamp)
+	whereClause := baseWhere
+	if timeWhere != "" {
+		whereClause += " AND " + timeWhere
 	}
-	if endTimestamp > 0 {
-		// 窗口结束之前已经存在
-		conditions = append(conditions, "start_timestamp <= ?")
-		args = append(args, endTimestamp)
-	}
-	whereClause := strings.Join(conditions, " AND ")
 
 	query := fmt.Sprintf(`
-		SELECT 
-			CASE 
-				WHEN host IS NOT NULL AND host != '' THEN host
-				WHEN destination_ip IS NOT NULL AND destination_ip != '' THEN destination_ip
-				ELSE 'Unknown'
-			END AS target,
-			CASE 
-				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
-				WHEN type = 'Inner' THEN 'Inner'
-				ELSE 'Unknown'
-			END AS source_ip,
-			CASE 
-				WHEN chain IS NOT NULL AND chain != '' THEN chain
-				ELSE 'Unknown'
-			END AS chain,
+		SELECT
+			%s AS target,
 			SUM(download) AS download,
 			SUM(upload) AS upload,
-			SUM(download + upload) AS total
+			SUM(download + upload) AS total,
+			COUNT(*) AS connections,
+			COUNT(DISTINCT %s) AS clients,
+			COUNT(DISTINCT %s) AS chains,
+			%s AS first_seen,
+			%s AS last_seen
 		FROM connections
 		WHERE %s
-		GROUP BY 
-			CASE 
-				WHEN host IS NOT NULL AND host != '' THEN host
-				WHEN destination_ip IS NOT NULL AND destination_ip != '' THEN destination_ip
-				ELSE 'Unknown'
-			END,
-			CASE 
-				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
-				WHEN type = 'Inner' THEN 'Inner'
-				ELSE 'Unknown'
-			END,
-			CASE 
-				WHEN chain IS NOT NULL AND chain != '' THEN chain
-				ELSE 'Unknown'
-			END
+		GROUP BY %s
 		ORDER BY total DESC
 		LIMIT 200
-	`, whereClause)
+	`, targetExpr, sourceIPExpr, chainExpr, firstSeenExpr, lastSeenExpr, whereClause, targetExpr)
+
+	return d.queryStats(query, args...)
+}
+
+// GetSourceIPStatsWithRange 按客户端（源IP）聚合的统计信息
+// startTimestamp / endTimestamp 为 0 表示不限制该侧
+func (d *Database) GetSourceIPStatsWithRange(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
+	baseWhere := "((source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner')"
+	timeWhere, args := buildTimeWindow(startTimestamp, endTimestamp)
+
+	whereClause := baseWhere
+	if timeWhere != "" {
+		whereClause += " AND " + timeWhere
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			%s AS target,
+			SUM(download) AS download,
+			SUM(upload) AS upload,
+			SUM(download + upload) AS total,
+			COUNT(*) AS connections,
+			COUNT(DISTINCT %s) AS clients,
+			COUNT(DISTINCT %s) AS chains,
+			%s AS first_seen,
+			%s AS last_seen
+		FROM connections
+		WHERE %s
+		GROUP BY %s
+		ORDER BY total DESC
+		LIMIT 100
+	`, sourceIPExpr, targetExpr, chainExpr, firstSeenExpr, lastSeenExpr, whereClause, sourceIPExpr)
+
+	return d.queryStats(query, args...)
+}
+
+// queryStats 执行统计查询并扫描结果
+// 空结果返回 [] 而不是 nil，避免 JSON 编码成 null 导致前端报错
+func (d *Database) queryStats(query string, args ...interface{}) ([]StatsEntry, error) {
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := []StatsEntry{}
+	for rows.Next() {
+		var entry StatsEntry
+		if err := rows.Scan(&entry.Target, &entry.Download, &entry.Upload, &entry.Total,
+			&entry.Connections, &entry.Peers, &entry.Chains, &entry.FirstSeen, &entry.LastSeen); err != nil {
+			return nil, err
+		}
+		stats = append(stats, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return stats, nil
+}
+
+// GetTargetDetail 某个目标的明细：按 客户端 × 线路 × 规则 的组合逐条列出
+func (d *Database) GetTargetDetail(target string, startTimestamp, endTimestamp int64) (*DetailResponse, error) {
+	if target == "" {
+		return nil, fmt.Errorf("目标不能为空")
+	}
+
+	// 过滤条件必须复用聚合用的同一个表达式，否则点开看到的量和行上的量对不上
+	baseWhere := fmt.Sprintf("(%s) = ?", targetExpr)
+	args := []interface{}{target}
+
+	rows, err := d.queryDetailRows(baseWhere, args, startTimestamp, endTimestamp, sourceIPExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	// 明细列表只取 Top N，副标题里的总数要单独统计，否则会显示成被截断后的数量
+	peers, chains, err := d.queryDetailCount(baseWhere, args, startTimestamp, endTimestamp, sourceIPExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DetailResponse{
+		Name:     target,
+		Subtitle: fmt.Sprintf("共 %d 个客户端、%d 条线路", peers, chains),
+		KeyLabel: "客户端",
+		Rows:     rows,
+	}, nil
+}
+
+// GetSourceIPDetail 某个客户端的明细：按 目标 × 线路 × 规则 的组合逐条列出
+func (d *Database) GetSourceIPDetail(sourceIP string, startTimestamp, endTimestamp int64) (*DetailResponse, error) {
+	if sourceIP == "" {
+		return nil, fmt.Errorf("客户端不能为空")
+	}
+
+	baseWhere := fmt.Sprintf("(%s) = ?", sourceIPExpr)
+	args := []interface{}{sourceIP}
+
+	rows, err := d.queryDetailRows(baseWhere, args, startTimestamp, endTimestamp, targetExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	peers, chains, err := d.queryDetailCount(baseWhere, args, startTimestamp, endTimestamp, targetExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DetailResponse{
+		Name:     sourceIP,
+		Subtitle: fmt.Sprintf("访问了 %d 个目标、%d 条线路", peers, chains),
+		KeyLabel: "目标",
+		Rows:     rows,
+	}, nil
+}
+
+// queryDetailRows 在给定过滤条件下查询明细（按对侧维度 × 线路 × 规则 分组）
+// peerExpr: 看目标明细时传 sourceIPExpr，看客户端明细时传 targetExpr
+func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
+	startTimestamp, endTimestamp int64, peerExpr string) ([]DetailRow, error) {
+
+	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
+
+	conditions := []string{baseWhere}
+	args := append([]interface{}{}, baseArgs...)
+	if timeWhere != "" {
+		conditions = append(conditions, timeWhere)
+		args = append(args, timeArgs...)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			%s AS key,
+			%s AS chain,
+			%s AS rule,
+			SUM(download) AS download,
+			SUM(upload) AS upload,
+			SUM(download + upload) AS total,
+			COUNT(*) AS connections,
+			%s AS first_seen,
+			%s AS last_seen
+		FROM connections
+		WHERE %s
+		GROUP BY %s, %s, %s
+		ORDER BY total DESC
+		LIMIT 200
+	`, peerExpr, chainExpr, ruleExpr, firstSeenExpr, lastSeenExpr,
+		strings.Join(conditions, " AND "), peerExpr, chainExpr, ruleExpr)
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
@@ -694,67 +875,52 @@ func (d *Database) GetStatsWithTimeRange(startTimestamp, endTimestamp int64) ([]
 	}
 	defer rows.Close()
 
-	// 初始化为空切片而不是 nil，避免结果为空时 JSON 编码成 null 导致前端报错
-	stats := []StatsEntry{}
-	count := 0
+	details := []DetailRow{}
 	for rows.Next() {
-		var entry StatsEntry
-		err := rows.Scan(&entry.Target, &entry.SourceIP, &entry.Chain, &entry.Download, &entry.Upload, &entry.Total)
-		if err != nil {
+		var row DetailRow
+		if err := rows.Scan(&row.Key, &row.Chain, &row.Rule, &row.Download, &row.Upload, &row.Total,
+			&row.Connections, &row.FirstSeen, &row.LastSeen); err != nil {
 			return nil, err
 		}
-		stats = append(stats, entry)
-		count++
+		details = append(details, row)
 	}
-
-	return stats, nil
-}
-
-// GetSourceIPStats 获取SourceIP统计信息
-func (d *Database) GetSourceIPStats() ([]StatsEntry, error) {
-	query := `
-		SELECT 
-			CASE 
-				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
-				WHEN type = 'Inner' THEN 'Inner'
-				ELSE 'Unknown'
-			END AS target,
-			SUM(download) AS download,
-			SUM(upload) AS upload,
-			SUM(download + upload) AS total
-		FROM connections
-		WHERE (source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner'
-		GROUP BY 
-			CASE 
-				WHEN source_ip IS NOT NULL AND source_ip != '' THEN source_ip
-				WHEN type = 'Inner' THEN 'Inner'
-				ELSE 'Unknown'
-			END
-		ORDER BY total DESC
-		LIMIT 100
-	`
-
-	rows, err := d.db.Query(query)
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	// 同上：空结果返回 [] 而不是 null
-	stats := []StatsEntry{}
-	for rows.Next() {
-		var entry StatsEntry
-		err := rows.Scan(&entry.Target, &entry.Download, &entry.Upload, &entry.Total)
-		if err != nil {
-			return nil, err
-		}
-		stats = append(stats, entry)
-	}
-
-	return stats, nil
+	return details, nil
 }
 
-// calculateTimeSlotIndex 计算时间戳对应的时间槽序号（0-287）
+// queryDetailCount 统计明细对象的对侧维度数量与线路数
+// peerExpr: 按目标看明细时传 sourceIPExpr，按客户端看时传 targetExpr
+func (d *Database) queryDetailCount(baseWhere string, baseArgs []interface{},
+	startTimestamp, endTimestamp int64, peerExpr string) (int64, int64, error) {
+
+	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
+
+	conditions := []string{baseWhere}
+	args := append([]interface{}{}, baseArgs...)
+	if timeWhere != "" {
+		conditions = append(conditions, timeWhere)
+		args = append(args, timeArgs...)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			COUNT(DISTINCT %s) AS peers,
+			COUNT(DISTINCT %s) AS chains
+		FROM connections
+		WHERE %s
+	`, peerExpr, chainExpr, strings.Join(conditions, " AND "))
+
+	var peers, chains int64
+	if err := d.db.QueryRow(query, args...).Scan(&peers, &chains); err != nil {
+		return 0, 0, err
+	}
+
+	return peers, chains, nil
+}
+
 func calculateTimeSlotIndex(timestamp int64, dateStart time.Time) int {
 	t := time.Unix(timestamp, 0).In(dateStart.Location())
 	duration := t.Sub(dateStart)
