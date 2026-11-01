@@ -32,7 +32,32 @@
             </button>
         </div>
 
-        <div x-data="{ tbl: mainTable }">{{template "table" .}}</div>
+        <div x-data="{ tbl: mainTable }">
+            {{template "table-hint" .}}
+            <div class="overflow-auto rounded-lg border border-base-300">
+                <table class="table table-zebra table-pin-rows w-full min-w-[980px]">
+                    {{template "table-head" .}}
+                    <tbody>
+                        <template x-for="(item, index) in tbl.rows" :key="item.Target || index">
+                            <tr class="row-hover cursor-pointer" @click="tbl.onRowClick(item)">
+                                <td class="w-16 text-center" :class="index < 3 ? 'font-bold text-primary' : 'opacity-60'" x-text="index + 1"></td>
+                                <td class="break-all font-medium" x-text="item.Target"></td>
+                                <td class="text-right tabular-nums" x-text="item.Connections"></td>
+                                <td class="text-right tabular-nums" x-text="item.Peers"></td>
+                                <td class="text-right tabular-nums" x-text="item.Chains"></td>
+                                <td class="text-right tabular-nums" x-text="formatBytes(item.Download)"></td>
+                                <td class="text-right tabular-nums" x-text="formatBytes(item.Upload)"></td>
+                                <td class="text-right tabular-nums font-semibold" x-text="formatBytes(item.Total)"></td>
+                                <td class="text-right tabular-nums whitespace-nowrap" x-text="formatTime(item.LastSeen)"></td>
+                                <td class="w-20 text-center">
+                                    <button type="button" class="btn btn-xs btn-ghost" @click.stop="tbl.onRowClick(item)">详情</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <div x-show="!loading && !error && mainTable.rows.length === 0" class="text-center py-8" x-cloak>
@@ -54,16 +79,16 @@
             logLabel: '目标统计',
             minWidth: 'min-w-[980px]',
             columns: [
-                { key: 'rank', label: '排名', format: 'rank', width: 'w-16' },
-                { key: 'Target', label: '目标', sort: 'target', format: 'text' },
-                { key: 'Connections', label: '连接数', sort: 'connections', align: 'right', format: 'number' },
-                { key: 'Peers', label: '客户端数', sort: 'peers', align: 'right', format: 'number' },
-                { key: 'Chains', label: '线路数', align: 'right', format: 'number' },
-                { key: 'Download', label: '下载量', sort: 'download', align: 'right', format: 'bytes' },
-                { key: 'Upload', label: '上传量', sort: 'upload', align: 'right', format: 'bytes' },
-                { key: 'Total', label: '总计', sort: 'total', align: 'right', format: 'bytes', strong: true },
-                { key: 'LastSeen', label: '最近访问', sort: 'last', align: 'right', format: 'time' },
-                { key: 'action', label: '明细', format: 'action', width: 'w-20' }
+                { key: 'rank', label: '排名', width: 'w-16' },
+                { key: 'Target', label: '目标', sort: 'target' },
+                { key: 'Connections', label: '连接数', sort: 'connections', align: 'right' },
+                { key: 'Peers', label: '客户端数', sort: 'peers', align: 'right' },
+                { key: 'Chains', label: '线路数', align: 'right' },
+                { key: 'Download', label: '下载量', sort: 'download', align: 'right' },
+                { key: 'Upload', label: '上传量', sort: 'upload', align: 'right' },
+                { key: 'Total', label: '总计', sort: 'total', align: 'right' },
+                { key: 'LastSeen', label: '最近访问', sort: 'last', align: 'right' },
+                { key: 'action', label: '明细', width: 'w-20' }
             ]
         });
     }

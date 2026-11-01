@@ -46,7 +46,35 @@
 
         <div x-show="!detail.loading && !detail.error" class="overflow-auto" x-cloak>
             <div x-show="detailTable.rows.length === 0" class="text-sm opacity-60" x-text="detailTable.search ? '没有匹配的明细' : '暂无数据'"></div>
-            <div x-show="detailTable.rows.length > 0" x-data="{ tbl: detailTable }">{{template "table" .}}</div>
+            <div x-show="detailTable.rows.length > 0" x-data="{ tbl: detailTable }">
+                {{template "table-hint" .}}
+                <div class="rounded-lg border border-base-300">
+                    <table class="table table-sm table-pin-rows w-full min-w-[1000px]">
+                        {{template "table-head" .}}
+                        <tbody>
+                            <template x-for="(row, rowIndex) in tbl.rows" :key="rowIndex">
+                                <tr class="row-hover">
+                                    <td class="break-all font-medium" x-text="row.Key"></td>
+                                    <!-- 拆分开关打开时才出现这两列：直接放在 tr 里，
+                                         不像通用模板那样需要给每个单元格加包装元素 -->
+                                    <template x-if="detail.data && detail.data.SplitChain">
+                                        <td class="break-all text-xs opacity-80" x-text="row.Chain"></td>
+                                    </template>
+                                    <template x-if="detail.data && detail.data.SplitRule">
+                                        <td class="break-all text-xs opacity-80" x-text="row.Rule"></td>
+                                    </template>
+                                    <td class="text-right tabular-nums" x-text="formatBytes(row.Download)"></td>
+                                    <td class="text-right tabular-nums" x-text="formatBytes(row.Upload)"></td>
+                                    <td class="text-right tabular-nums font-semibold" x-text="formatBytes(row.Total)"></td>
+                                    <td class="text-right tabular-nums" x-text="row.Connections"></td>
+                                    <td class="text-right tabular-nums whitespace-nowrap" x-text="formatTime(row.FirstSeen)"></td>
+                                    <td class="text-right tabular-nums whitespace-nowrap" x-text="formatTime(row.LastSeen)"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <div class="modal-action">

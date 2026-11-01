@@ -1,57 +1,36 @@
-{{define "table"}}
-<!-- 共享表格：两个统计页的主表与弹窗的明细表都用这一份。
-     用法：外层用 x-data 把某张表的状态绑定成 tbl，再引用本模板。
-     列定义、行数上限提示、表头排序都由 tbl 驱动。
-     注意：注释里不能出现 Go 模板动作，否则会被解析并导致递归 -->
-<div>
-    <div class="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm opacity-70">
-        <span>
-            共 <span x-text="tbl.total"></span> 行<template x-if="tbl.truncated"><span>，当前显示前 <span x-text="tbl.rows.length"></span> 行，可用搜索缩小范围</span></template>
-        </span>
-        <span x-show="tbl.search" class="text-xs">
-            已按「<span x-text="tbl.search"></span>」筛选
-            <button type="button" class="btn btn-xs btn-ghost" @click="tbl.clearSearch()">清除</button>
-        </span>
-    </div>
+<!-- 表格的通用片段：只放三张表真正同构的部分 —— 提示条与表头。
+     数据行的标记由各页面自己写（见各页面的 rows 片段）。
 
-    <div class="overflow-auto rounded-lg border border-base-300">
-        <table class="table table-zebra table-pin-rows w-full" :class="tbl.minWidth">
-            <thead>
-                <tr>
-                    <template x-for="col in tbl.columns" :key="col.key">
-                        <th class="cursor-pointer select-none whitespace-nowrap"
-                            :class="(col.align === 'right' ? 'text-right ' : '') + (col.width || '')"
-                            @click="tbl.toggleSort(col.sort)">
-                            <span x-text="col.label"></span>
-                            <span class="ml-1 text-[10px] opacity-70" x-text="tbl.sortIcon(col.sort)"></span>
-                        </th>
-                    </template>
-                </tr>
-            </thead>
-            <tbody>
-                <template x-for="(item, index) in tbl.rows" :key="item.Target || index">
-                    <tr class="row-hover" :class="tbl.onRowClick ? 'cursor-pointer' : ''"
-                        @click="tbl.onRowClick ? tbl.onRowClick(item) : null">
-                        <!-- x-for 只克隆模板里的第一个根元素，所以根元素只能是这一个 td；
-                             三种单元格用 x-if 放在 td 内部（x-if 不成立时不会创建元素），
-                             避免每个单元格都塞 3 个子元素 —— 500 行 × 10 列时差别很大 -->
-                        <template x-for="col in tbl.columns" :key="col.key">
-                            <td :class="cellClass(col, item, index)">
-                                <template x-if="col.format !== 'badge' && col.format !== 'action'">
-                                    <span x-text="cellText(col, item, index)"></span>
-                                </template>
-                                <template x-if="col.format === 'badge'">
-                                    <span class="badge badge-sm badge-outline" :title="item[col.key]" x-text="item[col.key]"></span>
-                                </template>
-                                <template x-if="col.format === 'action'">
-                                    <button type="button" class="btn btn-xs btn-ghost" @click.stop="tbl.onRowClick(item)">详情</button>
-                                </template>
-                            </td>
-                        </template>
-                    </tr>
-                </template>
-            </tbody>
-        </table>
-    </div>
+     为什么不把数据行也共享：单元格要按列类型（文本 / 字节 / 时间 / 徽章 / 操作按钮）
+     产出不同结构，放进通用模板就得在运行时分支，每个单元格会多出一个包装元素
+     （500 行 × 10 列时元素数与 Alpine 副作用数都翻倍，而功能没有任何增加）。
+     只抽象真正通用的，不为抽象付运行时代价。
+
+     注意：注释里不能出现 Go 模板动作，否则会被解析并导致递归 -->
+
+{{define "table-hint"}}
+<div class="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm opacity-70">
+    <span>
+        共 <span x-text="tbl.total"></span> 行<template x-if="tbl.truncated"><span>，当前显示前 <span x-text="tbl.rows.length"></span> 行，可用搜索缩小范围</span></template>
+    </span>
+    <span x-show="tbl.search" class="text-xs">
+        已按「<span x-text="tbl.search"></span>」筛选
+        <button type="button" class="btn btn-xs btn-ghost" @click="tbl.clearSearch()">清除</button>
+    </span>
 </div>
+{{end}}
+
+{{define "table-head"}}
+<thead>
+    <tr>
+        <template x-for="col in tbl.columns" :key="col.key">
+            <th class="cursor-pointer select-none whitespace-nowrap"
+                :class="(col.align === 'right' ? 'text-right ' : '') + (col.width || '')"
+                @click="tbl.toggleSort(col.sort)">
+                <span x-text="col.label"></span>
+                <span class="ml-1 text-[10px] opacity-70" x-text="tbl.sortIcon(col.sort)"></span>
+            </th>
+        </template>
+    </tr>
+</thead>
 {{end}}

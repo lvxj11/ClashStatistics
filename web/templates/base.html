@@ -264,46 +264,6 @@
             };
         }
 
-        // 单元格文本：按列的 format 决定怎么显示
-        function cellText(col, item, index) {
-            if (col.format === 'rank') {
-                return index + 1;
-            }
-            const value = item[col.key];
-            if (col.format === 'bytes') {
-                return formatBytes(value);
-            }
-            if (col.format === 'time') {
-                return formatTime(value);
-            }
-            return value;
-        }
-
-        // 单元格类名：对齐、等宽数字、前三名强调等
-        function cellClass(col, item, index) {
-            const classes = [];
-            if (col.format === 'rank') {
-                classes.push('text-center');
-                classes.push(index < 3 ? 'font-bold text-primary' : 'opacity-60');
-            }
-            if (col.format === 'action') {
-                classes.push('text-center');
-            }
-            if (col.align === 'right') {
-                classes.push('text-right');
-            }
-            if (col.format === 'bytes' || col.format === 'number' || col.format === 'time') {
-                classes.push('tabular-nums');
-            }
-            if (col.format === 'time') {
-                classes.push('whitespace-nowrap');
-            }
-            if (col.strong) {
-                classes.push('font-semibold');
-            }
-            return classes.join(' ');
-        }
-
         // 明细弹窗的公共状态与行为：两个统计页共用同一份弹窗模板，
         // kind 决定打哪个接口、用哪个查询参数名
         function detailState(kind) {
@@ -375,20 +335,20 @@
                 },
                 // 明细的列随 KeyLabel 与拆分开关变化，每次拿到数据后重建
                 buildDetailColumns(data) {
-                    const columns = [{ key: 'Key', label: data.KeyLabel || '名称', sort: 'key', format: 'text' }];
+                    const columns = [{ key: 'Key', label: data.KeyLabel || '名称', sort: 'key' }];
                     if (data.SplitChain) {
-                        columns.push({ key: 'Chain', label: '线路', format: 'text' });
+                        columns.push({ key: 'Chain', label: '线路' });
                     }
                     if (data.SplitRule) {
-                        columns.push({ key: 'Rule', label: '规则', format: 'text' });
+                        columns.push({ key: 'Rule', label: '规则' });
                     }
                     columns.push(
-                        { key: 'Download', label: '下载量', sort: 'download', align: 'right', format: 'bytes' },
-                        { key: 'Upload', label: '上传量', sort: 'upload', align: 'right', format: 'bytes' },
-                        { key: 'Total', label: '总计', sort: 'total', align: 'right', format: 'bytes', strong: true },
-                        { key: 'Connections', label: '连接数', sort: 'connections', align: 'right', format: 'number' },
-                        { key: 'FirstSeen', label: '首次访问', sort: 'first', align: 'right', format: 'time' },
-                        { key: 'LastSeen', label: '最近访问', sort: 'last', align: 'right', format: 'time' }
+                        { key: 'Download', label: '下载量', sort: 'download', align: 'right' },
+                        { key: 'Upload', label: '上传量', sort: 'upload', align: 'right' },
+                        { key: 'Total', label: '总计', sort: 'total', align: 'right' },
+                        { key: 'Connections', label: '连接数', sort: 'connections', align: 'right' },
+                        { key: 'FirstSeen', label: '首次访问', sort: 'first', align: 'right' },
+                        { key: 'LastSeen', label: '最近访问', sort: 'last', align: 'right' }
                     );
                     return columns;
                 }
