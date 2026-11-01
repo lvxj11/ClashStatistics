@@ -9,10 +9,6 @@ import (
 	"clash-statistics/web"
 )
 
-var (
-	db *database.Database
-)
-
 func main() {
 	showVersion := flag.Bool("v", false, "输出版本号")
 	flag.Parse()
@@ -48,7 +44,7 @@ func main() {
 	log.Startup("Web Port: %s\n", config.WebPort)
 
 	// 初始化数据库
-	db, err = database.InitDB()
+	db, err := database.InitDB()
 	if err != nil {
 		log.Error("初始化数据库失败: %v\n", err)
 		return

@@ -89,6 +89,10 @@ type Metadata struct {
 	DestinationIPASN  string      `json:"destinationIPASN"`
 }
 
+// clashRequestTimeout 单次请求 Clash API 的超时时间
+// 与采集间隔无关：间隔是采集频率，超时是单次请求上限
+const clashRequestTimeout = 3 * time.Second
+
 // GetConnectionsFromClash 从 Clash API 获取连接信息
 func GetConnectionsFromClash(clashHost, clashSecret string, clashInterval int) (*ConnectionInfo, error) {
 	GetLogger().Debug("调用 Clash API 获取连接信息\n")
@@ -100,8 +104,10 @@ func GetConnectionsFromClash(clashHost, clashSecret string, clashInterval int) (
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		// 创建带超时的HTTP客户端
+		// 超时与轮询间隔无关：间隔是采集频率，超时是单次请求的上限，
+		// 用间隔推导会让"调大采集间隔"连带把超时也放大
 		client := &http.Client{
-			Timeout: time.Duration(clashInterval/2) * time.Millisecond,
+			Timeout: clashRequestTimeout,
 			Transport: &http.Transport{
 				MaxIdleConns:        10,
 				MaxIdleConnsPerHost: 5,

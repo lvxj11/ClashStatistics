@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"clash-statistics/database"
@@ -68,41 +69,17 @@ func (s *Server) startDatabaseMaintenance() {
 }
 
 // performDatabaseMaintenance 执行数据库维护任务
+// performDatabaseMaintenance 启动时的维护：只清理过期数据
+// VACUUM 留给定时器去做 —— 每次启动都全库 VACUUM 一次，库稍大就会明显拖慢启动
 func (s *Server) performDatabaseMaintenance() {
 	log := utils.GetLogger()
 
-	// 检查数据库大小
-	dbSize, err := s.db.GetDatabaseSize()
-	if err != nil {
-		log.Error("获取数据库大小失败: %v\n", err)
-	} else {
-		log.Info("当前数据库大小: %d bytes (%.2f MB)\n", dbSize, float64(dbSize)/1024/1024)
-	}
-
-	// 执行一次数据清理
 	if err := s.db.CleanupOldData(s.config.DBCleanupDays); err != nil {
-		log.Error("初始化数据清理失败: %v\n", err)
-	} else {
-		log.Info("初始化数据清理完成\n")
+		log.Error("启动数据清理失败: %v\n", err)
+		return
 	}
 
-	// 执行一次数据库VACUUM
-	if err := s.db.Vacuum(); err != nil {
-		log.Error("初始化数据库VACUUM失败: %v\n", err)
-	} else {
-		log.Info("初始化数据库VACUUM完成\n")
-	}
-
-	// 再次检查数据库大小，比较清理前后的变化
-	newDbSize, err := s.db.GetDatabaseSize()
-	if err != nil {
-		log.Error("获取清理后数据库大小失败: %v\n", err)
-	} else {
-		log.Info("清理后数据库大小: %d bytes (%.2f MB)\n", newDbSize, float64(newDbSize)/1024/1024)
-		if dbSize > newDbSize {
-			log.Info("数据库大小减少: %d bytes (%.2f MB)\n", dbSize-newDbSize, float64(dbSize-newDbSize)/1024/1024)
-		}
-	}
+	log.Info("启动数据清理完成\n")
 }
 
 // Handler 返回 HTTP 路由入口
@@ -398,15 +375,6 @@ func (s *Server) getSourceIPDetail(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(detail)
 }
 
-// ganttPayload 是 /api/gantt 的实际输出
-// 288 个时间槽里大部分是 0（终端通常是断续在线），只传非零槽能显著减小体积，
-// 配合 gzip 效果更明显。SlotIndexes 与 SlotValues 一一对应：第 i 个槽的值为第 i 个值
-type ganttPayload struct {
-	SourceIP    string `json:"SourceIP"`
-	SlotIndexes []int  `json:"SlotIndexes"`
-	SlotValues  []int  `json:"SlotValues"`
-}
-
 // getGanttData 返回甘特图数据的 API 端点
 func (s *Server) getGanttData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -422,23 +390,7 @@ func (s *Server) getGanttData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload := make([]ganttPayload, 0, len(ganttData))
-	for _, entry := range ganttData {
-		item := ganttPayload{
-			SourceIP:    entry.SourceIP,
-			SlotIndexes: []int{},
-			SlotValues:  []int{},
-		}
-		for slot, value := range entry.TimeSlots {
-			if value > 0 {
-				item.SlotIndexes = append(item.SlotIndexes, slot)
-				item.SlotValues = append(item.SlotValues, int(value))
-			}
-		}
-		payload = append(payload, item)
-	}
-
-	json.NewEncoder(w).Encode(payload)
+	json.NewEncoder(w).Encode(ganttData)
 }
 
 // refreshData 刷新数据的 API 端点
@@ -483,11 +435,39 @@ func (s *Server) showOnlineTime(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, "在线状态", "online-time", "online-time.html")
 }
 
-// renderPage 渲染页面的通用函数
-func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTemplate string) {
-	tmpl, err := template.ParseFS(templateFiles,
+// templateCache 缓存已解析的模板
+// 模板内容是编译进二进制的常量，没必要每个请求重新解析一遍
+var (
+	templateCache   = map[string]*template.Template{}
+	templateCacheMu sync.RWMutex
+)
+
+// parseTemplate 解析（并缓存）某个页面的模板
+func parseTemplate(contentTemplate string) (*template.Template, error) {
+	templateCacheMu.RLock()
+	tmpl, ok := templateCache[contentTemplate]
+	templateCacheMu.RUnlock()
+	if ok {
+		return tmpl, nil
+	}
+
+	parsed, err := template.ParseFS(templateFiles,
 		"templates/base.html", "templates/table.html", "templates/detail-modal.html",
 		"templates/"+contentTemplate)
+	if err != nil {
+		return nil, err
+	}
+
+	templateCacheMu.Lock()
+	templateCache[contentTemplate] = parsed
+	templateCacheMu.Unlock()
+
+	return parsed, nil
+}
+
+// renderPage 渲染页面的通用函数
+func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTemplate string) {
+	tmpl, err := parseTemplate(contentTemplate)
 	if err != nil {
 		http.Error(w, "解析模板失败: "+err.Error(), http.StatusInternalServerError)
 		return

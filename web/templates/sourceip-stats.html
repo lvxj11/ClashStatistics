@@ -49,65 +49,23 @@
 
 <script>
     function sourceIPStats() {
-        return {
-            mainTable: null,
-            loading: true,
-            error: null,
-            startTime: '',
-            endTime: '',
-
-            init() {
-                const self = this;
-                this.initDetail();
-                this.mainTable = makeTable({
-                    minWidth: 'min-w-[900px]',
-                    columns: [
-                        { key: 'rank', label: '排名', format: 'rank', width: 'w-16' },
-                        { key: 'Target', label: '客户端', sort: 'target', format: 'text' },
-                        { key: 'Connections', label: '连接数', sort: 'connections', align: 'right', format: 'number' },
-                        { key: 'Peers', label: '访问目标数', sort: 'peers', align: 'right', format: 'number' },
-                        { key: 'Chains', label: '线路数', align: 'right', format: 'number' },
-                        { key: 'Download', label: '下载量', sort: 'download', align: 'right', format: 'bytes' },
-                        { key: 'Upload', label: '上传量', sort: 'upload', align: 'right', format: 'bytes' },
-                        { key: 'Total', label: '总计', sort: 'total', align: 'right', format: 'bytes', strong: true },
-                        { key: 'LastSeen', label: '最近在线', sort: 'last', align: 'right', format: 'time' },
-                        { key: 'action', label: '明细', format: 'action', width: 'w-20' }
-                    ],
-                    reload: () => self.loadSourceIPStats(),
-                    onRowClick: item => self.openDetail(item.Target)
-                });
-                self.loadSourceIPStats();
-            },
-
-            loadSourceIPStats() {
-                this.loading = true;
-                const params = new URLSearchParams();
-                if (this.startTime) {
-                    params.append('startTime', this.startTime);
-                }
-                if (this.endTime) {
-                    params.append('endTime', this.endTime);
-                }
-                fetch('/api/sourceip-stats?' + this.mainTable.appendParams(params).toString())
-                    .then(response => response.json())
-                    .then(data => {
-                        this.mainTable.applyResult(data);
-                        this.loading = false;
-                    })
-                    .catch(error => {
-                        console.error('加载客户端统计失败:', error);
-                        this.error = '加载失败: ' + error.message;
-                        this.loading = false;
-                    });
-            },
-
-            clearFilters() {
-                this.startTime = '';
-                this.endTime = '';
-                // 时间筛选是服务端做的，清空后必须重新请求
-                this.loadSourceIPStats();
-            }
-        }
+        return makeStatsPage({
+            endpoint: '/api/sourceip-stats',
+            logLabel: '客户端统计',
+            minWidth: 'min-w-[900px]',
+            columns: [
+                { key: 'rank', label: '排名', format: 'rank', width: 'w-16' },
+                { key: 'Target', label: '客户端', sort: 'target', format: 'text' },
+                { key: 'Connections', label: '连接数', sort: 'connections', align: 'right', format: 'number' },
+                { key: 'Peers', label: '访问目标数', sort: 'peers', align: 'right', format: 'number' },
+                { key: 'Chains', label: '线路数', align: 'right', format: 'number' },
+                { key: 'Download', label: '下载量', sort: 'download', align: 'right', format: 'bytes' },
+                { key: 'Upload', label: '上传量', sort: 'upload', align: 'right', format: 'bytes' },
+                { key: 'Total', label: '总计', sort: 'total', align: 'right', format: 'bytes', strong: true },
+                { key: 'LastSeen', label: '最近在线', sort: 'last', align: 'right', format: 'time' },
+                { key: 'action', label: '明细', format: 'action', width: 'w-20' }
+            ]
+        });
     }
 </script>
 {{end}}

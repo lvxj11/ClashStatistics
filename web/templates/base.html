@@ -145,6 +145,62 @@
             return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
         }
         
+        // 两个统计页（目标统计、客户端统计）的公共部分：
+        // 页面逻辑完全一致，只有接口地址、列定义和文案不同
+        //
+        // config: { endpoint, columns, minWidth, logLabel, openDetailKind }
+        function makeStatsPage(config) {
+            return {
+                mainTable: null,
+                loading: true,
+                error: null,
+                startTime: '',
+                endTime: '',
+
+                init() {
+                    const self = this;
+                    this.initDetail();
+                    this.mainTable = makeTable({
+                        minWidth: config.minWidth,
+                        columns: config.columns,
+                        reload: () => self.loadStats(),
+                        onRowClick: item => self.openDetail(item.Target)
+                    });
+                    self.loadStats();
+                },
+
+                // 搜索与排序都发回服务端（有行数上限，只有服务端筛选才搜得全）
+                loadStats() {
+                    this.loading = true;
+                    const params = new URLSearchParams();
+                    if (this.startTime) {
+                        params.append('startTime', this.startTime);
+                    }
+                    if (this.endTime) {
+                        params.append('endTime', this.endTime);
+                    }
+                    fetch(config.endpoint + '?' + this.mainTable.appendParams(params).toString())
+                        .then(response => response.json())
+                        .then(data => {
+                            this.mainTable.applyResult(data);
+                            this.loading = false;
+                        })
+                        .catch(error => {
+                            console.error('加载' + config.logLabel + '失败:', error);
+                            this.error = '加载失败: ' + error.message;
+                            this.loading = false;
+                        });
+                },
+
+                clearFilters() {
+                    this.startTime = '';
+                    this.endTime = '';
+                    // 时间筛选是服务端做的，清空后必须重新请求
+                    this.loadStats();
+                }
+            };
+        }
+
         // 表格的公共状态与行为：两个统计页的主表与弹窗的明细表共用同一份
         // 表格模板，各自只提供列定义与"怎么重新取数"
         //

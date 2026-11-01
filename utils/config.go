@@ -92,6 +92,37 @@ func LoadConfig() (*Config, error) {
 	return config, nil
 }
 
+// configItem 描述一个配置项在配置文件里的位置、对应的环境变量，以及怎么赋值。
+// 文件解析与环境变量覆盖共用这张表，避免"加了配置项只改一处"的漏改
+type configItem struct {
+	Section string
+	Key     string
+	Env     string
+	Apply   func(*Config, string) // 统一用字符串传入，数值项在这里自己转换
+}
+
+var configItems = []configItem{
+	{"clash", "host", "CLASH_HOST", func(c *Config, v string) { c.ClashHost = v }},
+	{"clash", "secret", "CLASH_SECRET", func(c *Config, v string) { c.ClashSecret = v }},
+	{"clash", "interval", "CLASH_INTERVAL", func(c *Config, v string) {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.ClashInterval = n
+		}
+	}},
+	{"server", "log_level", "LOG_LEVEL", func(c *Config, v string) { c.LogLevel = v }},
+	{"server", "web_port", "WEB_PORT", func(c *Config, v string) { c.WebPort = v }},
+	{"server", "db_cleanup_days", "DB_CLEANUP_DAYS", func(c *Config, v string) {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.DBCleanupDays = n
+		}
+	}},
+	{"server", "db_vacuum_interval", "DB_VACUUM_INTERVAL", func(c *Config, v string) {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.DBVacuumInterval = n
+		}
+	}},
+}
+
 // loadConfigFile 从指定路径读取配置文件，覆盖已有配置项
 func loadConfigFile(config *Config, configPath string) error {
 	file, err := os.Open(configPath)
@@ -123,38 +154,14 @@ func loadConfigFile(config *Config, configPath string) error {
 			continue
 		}
 
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
 		// 移除引号（如果存在）
-		value = strings.Trim(value, "\"'")
+		value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
 
-		switch currentSection {
-		case "clash":
-			switch strings.ToLower(key) {
-			case "host":
-				config.ClashHost = value
-			case "secret":
-				config.ClashSecret = value
-			case "interval":
-				if intVal, err := strconv.Atoi(value); err == nil {
-					config.ClashInterval = intVal
-				}
-			}
-		case "server":
-			switch strings.ToLower(key) {
-			case "log_level":
-				config.LogLevel = value
-			case "web_port":
-				config.WebPort = value
-			case "db_cleanup_days":
-				if days, err := strconv.Atoi(value); err == nil {
-					config.DBCleanupDays = days
-				}
-			case "db_vacuum_interval":
-				if interval, err := strconv.Atoi(value); err == nil {
-					config.DBVacuumInterval = interval
-				}
+		for _, item := range configItems {
+			if item.Section == currentSection && item.Key == key {
+				item.Apply(config, value)
+				break
 			}
 		}
 	}
@@ -164,39 +171,13 @@ func loadConfigFile(config *Config, configPath string) error {
 
 // applyEnvOverrides 用环境变量逐项覆盖配置
 func applyEnvOverrides(config *Config) {
-	if host := os.Getenv("CLASH_HOST"); host != "" {
-		config.ClashHost = host
-		GetLogger().Debug("使用环境变量覆盖 ClashHost: %s\n", host)
-	}
-	if secret := os.Getenv("CLASH_SECRET"); secret != "" {
-		config.ClashSecret = secret
-		GetLogger().Debug("使用环境变量覆盖 ClashSecret\n")
-	}
-	if interval := os.Getenv("CLASH_INTERVAL"); interval != "" {
-		if intVal, err := strconv.Atoi(interval); err == nil {
-			config.ClashInterval = intVal
-			GetLogger().Debug("使用环境变量覆盖 ClashInterval: %d\n", intVal)
+	for _, item := range configItems {
+		value := os.Getenv(item.Env)
+		if value == "" {
+			continue
 		}
-	}
-	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
-		config.LogLevel = logLevel
-		GetLogger().Debug("使用环境变量覆盖 LogLevel: %s\n", logLevel)
-	}
-	if webPort := os.Getenv("WEB_PORT"); webPort != "" {
-		config.WebPort = webPort
-		GetLogger().Debug("使用环境变量覆盖 WebPort: %s\n", webPort)
-	}
-	if cleanupDays := os.Getenv("DB_CLEANUP_DAYS"); cleanupDays != "" {
-		if days, err := strconv.Atoi(cleanupDays); err == nil {
-			config.DBCleanupDays = days
-			GetLogger().Debug("使用环境变量覆盖 DBCleanupDays: %d\n", days)
-		}
-	}
-	if vacuumInterval := os.Getenv("DB_VACUUM_INTERVAL"); vacuumInterval != "" {
-		if interval, err := strconv.Atoi(vacuumInterval); err == nil {
-			config.DBVacuumInterval = interval
-			GetLogger().Debug("使用环境变量覆盖 DBVacuumInterval: %d\n", interval)
-		}
+		item.Apply(config, value)
+		GetLogger().Debug("使用环境变量覆盖 %s.%s: %s\n", item.Section, item.Key, value)
 	}
 }
 

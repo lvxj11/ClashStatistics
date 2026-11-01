@@ -183,10 +183,13 @@ func buildTimeWindow(startTimestamp, endTimestamp int64) (string, []interface{})
 	return strings.Join(conditions, " AND "), args
 }
 
-// GanttEntry 表示甘特图条目
-type GanttEntry struct {
-	SourceIP  string
-	TimeSlots [288]byte // 每天288个5分钟时间段，存储活动连接数
+// GanttRow 是 /api/gantt 的输出
+// 288 个时间槽里大部分是 0（终端通常断续在线），只传非零槽能显著减小体积，
+// 配合 gzip 效果更明显。SlotIndexes 与 SlotValues 一一对应
+type GanttRow struct {
+	SourceIP    string `json:"SourceIP"`
+	SlotIndexes []int  `json:"SlotIndexes"`
+	SlotValues  []int  `json:"SlotValues"`
 }
 
 // FromClashConnection 将 utils 中采集到的连接转换为数据库存储结构
@@ -348,6 +351,9 @@ func InitDB() (*Database, error) {
 	-- start_time 上的索引没有任何查询在使用，历史库中若存在则删除，减少每次写入的索引维护
 	DROP INDEX IF EXISTS idx_connections_start_time;
 	CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp);
+	-- 时间窗过滤用的是 last_seen_timestamp，这个索引原本在迁移里建，
+	-- 迁移代码删除后必须在这里建，否则新库缺索引
+	CREATE INDEX IF NOT EXISTS idx_connections_last_seen_timestamp ON connections(last_seen_timestamp);
 	`
 
 	_, err = db.Exec(sqlStmt)
@@ -355,264 +361,7 @@ func InitDB() (*Database, error) {
 		return nil, fmt.Errorf("创建表失败: %v", err)
 	}
 
-	// 检查是否需要添加新字段（数据库迁移）
-	database := &Database{db: db}
-	database.Migrate()
-
-	return database, nil
-}
-
-// Migrate 执行数据库迁移
-func (d *Database) Migrate() {
-	log := utils.GetLogger()
-
-	// 检查 start_timestamp 字段是否存在
-	var count int
-	err := d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='start_timestamp'").Scan(&count)
-	if err == nil && count == 0 {
-		log.Info("开始数据库迁移：添加 start_timestamp 和 end_timestamp 字段\n")
-
-		// 添加新字段
-		_, err := d.db.Exec("ALTER TABLE connections ADD COLUMN start_timestamp INTEGER DEFAULT 0")
-		if err != nil {
-			log.Error("添加 start_timestamp 字段失败: %v\n", err)
-			return
-		}
-
-		_, err = d.db.Exec("ALTER TABLE connections ADD COLUMN end_timestamp INTEGER DEFAULT 0")
-		if err != nil {
-			log.Error("添加 end_timestamp 字段失败: %v\n", err)
-			return
-		}
-
-		// 迁移现有数据：将 start_time 转换为 start_timestamp
-		_, err = d.db.Exec(`
-			UPDATE connections 
-			SET start_timestamp = CAST(strftime('%s', REPLACE(REPLACE(start_time, 'T', ' '), 'Z', '')) AS INTEGER)
-			WHERE start_time != '' AND start_timestamp = 0
-		`)
-		if err != nil {
-			log.Warn("迁移 start_timestamp 失败，将在应用层处理: %v\n", err)
-		} else {
-			log.Info("成功迁移 start_timestamp 数据\n")
-		}
-
-		// 迁移现有数据：将 closed_time 转换为 end_timestamp（如果存在）
-		var closedTimeCount int
-		d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='closed_time'").Scan(&closedTimeCount)
-		if closedTimeCount > 0 {
-			_, err = d.db.Exec(`
-				UPDATE connections 
-				SET end_timestamp = CAST(strftime('%s', closed_time) AS INTEGER)
-				WHERE closed_time != '' AND closed_time IS NOT NULL AND end_timestamp = 0
-			`)
-			if err != nil {
-				log.Warn("迁移 end_timestamp 失败，将在应用层处理: %v\n", err)
-			} else {
-				log.Info("成功迁移 end_timestamp 数据\n")
-			}
-		}
-
-		// 创建新索引
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_end_timestamp ON connections(end_timestamp)")
-		if err != nil {
-			log.Error("创建 end_timestamp 索引失败: %v\n", err)
-		}
-
-		log.Info("数据库迁移完成\n")
-	}
-
-	// 检查 chains 字段是否存在
-	var chainsCount int
-	err = d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='chains'").Scan(&chainsCount)
-	if err == nil && chainsCount == 0 {
-		log.Info("开始数据库迁移：添加 chains 字段\n")
-
-		// 添加 chains 字段
-		_, err := d.db.Exec("ALTER TABLE connections ADD COLUMN chains TEXT")
-		if err != nil {
-			log.Error("添加 chains 字段失败: %v\n", err)
-			return
-		}
-
-		log.Info("成功添加 chains 字段\n")
-	}
-
-	// 检查是否需要删除 closed_time 字段
-	var closedTimeCount int
-	d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='closed_time'").Scan(&closedTimeCount)
-	if closedTimeCount > 0 {
-		log.Info("开始数据库迁移：删除 closed_time 字段\n")
-
-		// 对于 SQLite，删除字段需要重建表
-		// 1. 创建临时表
-		_, err := d.db.Exec(`
-			CREATE TABLE IF NOT EXISTS connections_new (
-				id TEXT PRIMARY KEY,
-				network TEXT,
-				type TEXT,
-				source_ip TEXT,
-				destination_ip TEXT,
-				source_port TEXT,
-				destination_port TEXT,
-				host TEXT,
-				dns_mode TEXT,
-				uid INTEGER,
-				process TEXT,
-				process_path TEXT,
-				special_proxy TEXT,
-				special_rules TEXT,
-				remote_destination TEXT,
-				dscp INTEGER,
-				sniff_host TEXT,
-				inbound_ip TEXT,
-				inbound_port TEXT,
-				inbound_name TEXT,
-				inbound_user TEXT,
-				source_geoip TEXT,
-				destination_geoip TEXT,
-				source_ipasn TEXT,
-				destination_ipasn TEXT,
-				upload INTEGER,
-				download INTEGER,
-				start_time TEXT,
-				start_timestamp INTEGER DEFAULT 0,
-				end_timestamp INTEGER DEFAULT 0,
-				chain TEXT,
-				chains TEXT,
-				rule TEXT,
-				rule_payload TEXT,
-				source_real_ip TEXT,
-				source_real_port TEXT,
-				dest_real_ip TEXT,
-				dest_real_port TEXT,
-				last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-			)
-		`)
-		if err != nil {
-			log.Error("创建临时表失败: %v\n", err)
-			return
-		}
-
-		// 2. 复制数据
-		_, err = d.db.Exec(`
-			INSERT INTO connections_new (
-				id, network, type, source_ip, destination_ip, source_port, destination_port, 
-				host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
-				remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
-				inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-				upload, download, start_time, start_timestamp, end_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
-				source_real_port, dest_real_ip, dest_real_port, last_seen
-			) SELECT 
-				id, network, type, source_ip, destination_ip, source_port, destination_port, 
-				host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
-				remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
-				inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
-				upload, download, start_time, start_timestamp, end_timestamp, chain, '', rule, rule_payload, source_real_ip, 
-				source_real_port, dest_real_ip, dest_real_port, last_seen
-			FROM connections
-		`)
-		if err != nil {
-			log.Error("复制数据失败: %v\n", err)
-			return
-		}
-
-		// 3. 删除旧表
-		_, err = d.db.Exec("DROP TABLE connections")
-		if err != nil {
-			log.Error("删除旧表失败: %v\n", err)
-			return
-		}
-
-		// 4. 重命名新表
-		_, err = d.db.Exec("ALTER TABLE connections_new RENAME TO connections")
-		if err != nil {
-			log.Error("重命名表失败: %v\n", err)
-			return
-		}
-
-		// 5. 重建索引
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_host ON connections(host)")
-		if err != nil {
-			log.Error("创建 host 索引失败: %v\n", err)
-		}
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_destination_ip ON connections(destination_ip)")
-		if err != nil {
-			log.Error("创建 destination_ip 索引失败: %v\n", err)
-		}
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_source_ip ON connections(source_ip)")
-		if err != nil {
-			log.Error("创建 source_ip 索引失败: %v\n", err)
-		}
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_end_timestamp ON connections(end_timestamp)")
-		if err != nil {
-			log.Error("创建 end_timestamp 索引失败: %v\n", err)
-		}
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_last_seen ON connections(last_seen)")
-		if err != nil {
-			log.Error("创建 last_seen 索引失败: %v\n", err)
-		}
-		_, err = d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp)")
-		if err != nil {
-			log.Error("创建 start_timestamp 索引失败: %v\n", err)
-		}
-
-		log.Info("成功删除 closed_time 字段\n")
-	}
-
-	// 合并 last_seen 与 end_timestamp 为单一的 last_seen_timestamp：
-	// 两者记录的其实是同一件事（这条连接最后一次出现在 Clash 返回结果里的时间），
-	// 只是一个存字符串、一个存整数，合并后不再冗余
-	var lastSeenCount int
-	d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='last_seen'").Scan(&lastSeenCount)
-	if lastSeenCount > 0 {
-		log.Info("开始数据库迁移：合并 last_seen 与 end_timestamp 为 last_seen_timestamp\n")
-
-		var mergedCount int
-		d.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name='last_seen_timestamp'").Scan(&mergedCount)
-		if mergedCount == 0 {
-			if _, err := d.db.Exec("ALTER TABLE connections ADD COLUMN last_seen_timestamp INTEGER DEFAULT 0"); err != nil {
-				log.Error("添加 last_seen_timestamp 字段失败: %v\n", err)
-				return
-			}
-		}
-
-		// 回填：优先取已有的 end_timestamp，为空时再把 last_seen 字符串转成时间戳
-		if _, err := d.db.Exec(`
-			UPDATE connections
-			SET last_seen_timestamp = CASE
-				WHEN end_timestamp > 0 THEN end_timestamp
-				ELSE CAST(strftime('%s', last_seen) AS INTEGER)
-			END
-			WHERE last_seen_timestamp = 0
-		`); err != nil {
-			log.Error("回填 last_seen_timestamp 失败: %v\n", err)
-			return
-		}
-
-		// 依赖这些字段的索引必须先于字段本身删除
-		if _, err := d.db.Exec("DROP INDEX IF EXISTS idx_connections_last_seen"); err != nil {
-			log.Error("删除 last_seen 索引失败: %v\n", err)
-		}
-		if _, err := d.db.Exec("DROP INDEX IF EXISTS idx_connections_end_timestamp"); err != nil {
-			log.Error("删除 end_timestamp 索引失败: %v\n", err)
-		}
-
-		if _, err := d.db.Exec("ALTER TABLE connections DROP COLUMN last_seen"); err != nil {
-			log.Error("删除 last_seen 字段失败: %v\n", err)
-			return
-		}
-		if _, err := d.db.Exec("ALTER TABLE connections DROP COLUMN end_timestamp"); err != nil {
-			log.Error("删除 end_timestamp 字段失败: %v\n", err)
-			return
-		}
-
-		log.Info("数据库迁移完成：last_seen 与 end_timestamp 已合并\n")
-	}
-
-	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_connections_last_seen_timestamp ON connections(last_seen_timestamp)"); err != nil {
-		log.Error("创建 last_seen_timestamp 索引失败: %v\n", err)
-	}
+	return &Database{db: db}, nil
 }
 
 // SaveConnections 保存多个连接到数据库
@@ -706,9 +455,11 @@ func (d *Database) SaveConnections(connections []Connection) error {
 const maxTableRows = 500
 
 // sortColumns 排序字段白名单
-// 用户输入绝不能直接拼进 SQL，只能从这里取值；不在表里的一律回落到默认排序
+// 用户输入绝不能直接拼进 SQL，只能从这里取值；不在表里的一律回落到默认排序。
+// 第一列在聚合查询里叫 target、在明细查询里叫 key，两者用同一个排序键
 var sortColumns = map[string]string{
 	"target":      "target",
+	"key":         "key",
 	"download":    "download",
 	"upload":      "upload",
 	"total":       "total",
@@ -718,20 +469,9 @@ var sortColumns = map[string]string{
 	"last":        "last_seen",
 }
 
-// detailSortColumns 明细的排序白名单：第一列在明细查询里叫 key，不叫 target
-var detailSortColumns = map[string]string{
-	"key":         "key",
-	"download":    "download",
-	"upload":      "upload",
-	"total":       "total",
-	"connections": "connections",
-	"first":       "first_seen",
-	"last":        "last_seen",
-}
-
 // buildOrderBy 把排序字段与方向转成 ORDER BY 子句
-func buildOrderBy(allowed map[string]string, sortKey, order string) string {
-	column, ok := allowed[sortKey]
+func buildOrderBy(sortKey, order string) string {
+	column, ok := sortColumns[sortKey]
 	if !ok {
 		// 默认按总流量倒序，和改造前的观感一致
 		column, order = "total", "desc"
@@ -740,6 +480,26 @@ func buildOrderBy(allowed map[string]string, sortKey, order string) string {
 		order = "desc"
 	}
 	return fmt.Sprintf("ORDER BY %s %s", column, order)
+}
+
+// buildConditions 拼装查询条件：基础过滤 + 时间窗 + 搜索
+// 聚合查询、明细查询、总数统计都用这一份，避免三处各拼一遍导致条件不一致
+// searchExpr 为空表示不搜索
+func buildConditions(baseWhere, searchExpr, search string, startTimestamp, endTimestamp int64) (string, []interface{}) {
+	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
+
+	conditions := []string{baseWhere}
+	args := []interface{}{}
+	if timeWhere != "" {
+		conditions = append(conditions, timeWhere)
+		args = append(args, timeArgs...)
+	}
+	if search != "" && searchExpr != "" {
+		conditions = append(conditions, fmt.Sprintf("%s LIKE ? ESCAPE '\\'", searchExpr))
+		args = append(args, "%"+escapeLike(search)+"%")
+	}
+
+	return strings.Join(conditions, " AND "), args
 }
 
 // escapeLike 转义 LIKE 里的通配符，避免用户输入的 % / _ 被当成通配符
@@ -773,19 +533,7 @@ func (d *Database) GetSourceIPStatsWithRange(startTimestamp, endTimestamp int64,
 func (d *Database) queryStats(baseWhere, groupExpr, peerExpr string,
 	startTimestamp, endTimestamp int64, search, sortBy, order string) (*StatsResult, error) {
 
-	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
-
-	conditions := []string{baseWhere}
-	args := []interface{}{}
-	if timeWhere != "" {
-		conditions = append(conditions, timeWhere)
-		args = append(args, timeArgs...)
-	}
-	if search != "" {
-		conditions = append(conditions, fmt.Sprintf("%s LIKE ? ESCAPE '\\'", groupExpr))
-		args = append(args, "%"+escapeLike(search)+"%")
-	}
-	whereClause := strings.Join(conditions, " AND ")
+	whereClause, args := buildConditions(baseWhere, groupExpr, search, startTimestamp, endTimestamp)
 
 	// 真实条数：不受 LIMIT 影响，用于提示"共 N 行，可用搜索缩小范围"
 	countQuery := fmt.Sprintf(`
@@ -816,7 +564,7 @@ func (d *Database) queryStats(baseWhere, groupExpr, peerExpr string,
 		%s
 		LIMIT %d
 	`, groupExpr, peerExpr, chainExpr, firstSeenExpr, lastSeenExpr,
-		whereClause, groupExpr, buildOrderBy(sortColumns, sortBy, order), maxTableRows)
+		whereClause, groupExpr, buildOrderBy(sortBy, order), maxTableRows)
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
@@ -923,18 +671,9 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 	startTimestamp, endTimestamp int64, peerExpr string, splitChain, splitRule bool,
 	search, sortBy, order string) ([]DetailRow, int, error) {
 
-	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
-
-	conditions := []string{baseWhere}
+	whereClause, filterArgs := buildConditions(baseWhere, peerExpr, search, startTimestamp, endTimestamp)
 	args := append([]interface{}{}, baseArgs...)
-	if timeWhere != "" {
-		conditions = append(conditions, timeWhere)
-		args = append(args, timeArgs...)
-	}
-	if search != "" {
-		conditions = append(conditions, fmt.Sprintf("%s LIKE ? ESCAPE '\\'", peerExpr))
-		args = append(args, "%"+escapeLike(search)+"%")
-	}
+	args = append(args, filterArgs...)
 
 	// 第一列始终是对侧维度，线路与规则按需加入
 	selects := []string{peerExpr + " AS key"}
@@ -963,15 +702,15 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 		%s
 		LIMIT %d
 	`, strings.Join(selects, ", "), firstSeenExpr, lastSeenExpr,
-		strings.Join(conditions, " AND "), strings.Join(groups, ", "),
-		buildOrderBy(detailSortColumns, sortBy, order), maxTableRows)
+		whereClause, strings.Join(groups, ", "),
+		buildOrderBy(sortBy, order), maxTableRows)
 
 	// 真实条数：不受 LIMIT 影响
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM (
 			SELECT %s FROM connections WHERE %s GROUP BY %s
 		)
-	`, peerExpr, strings.Join(conditions, " AND "), strings.Join(groups, ", "))
+	`, peerExpr, whereClause, strings.Join(groups, ", "))
 
 	var total int
 	if err := d.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -1016,14 +755,9 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 func (d *Database) queryDetailCount(baseWhere string, baseArgs []interface{},
 	startTimestamp, endTimestamp int64, peerExpr string) (int64, int64, error) {
 
-	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
-
-	conditions := []string{baseWhere}
+	whereClause, timeArgs := buildConditions(baseWhere, "", "", startTimestamp, endTimestamp)
 	args := append([]interface{}{}, baseArgs...)
-	if timeWhere != "" {
-		conditions = append(conditions, timeWhere)
-		args = append(args, timeArgs...)
-	}
+	args = append(args, timeArgs...)
 
 	query := fmt.Sprintf(`
 		SELECT
@@ -1031,7 +765,7 @@ func (d *Database) queryDetailCount(baseWhere string, baseArgs []interface{},
 			COUNT(DISTINCT %s) AS chains
 		FROM connections
 		WHERE %s
-	`, peerExpr, chainExpr, strings.Join(conditions, " AND "))
+	`, peerExpr, chainExpr, whereClause)
 
 	var peers, chains int64
 	if err := d.db.QueryRow(query, args...).Scan(&peers, &chains); err != nil {
@@ -1056,7 +790,7 @@ func calculateTimeSlotIndex(timestamp int64, dateStart time.Time) int {
 }
 
 // GetGanttData 获取甘特图数据
-func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
+func (d *Database) GetGanttData(date string) ([]GanttRow, error) {
 	// 计算日期范围的时间戳（使用本地时区）
 	localLoc := time.Now().Location()
 	dateStart, err := time.ParseInLocation("2006-01-02", date, localLoc)
@@ -1086,8 +820,9 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 	}
 	defer rows.Close()
 
-	// 按sourceIP组织数据
-	ganttData := make(map[string][288]byte)
+	// 按sourceIP组织数据。存指针而不是数组值：数组是值类型，
+	// 直接 ganttData[ip] 取出来再改再写回会整块拷贝 288 字节
+	ganttData := make(map[string]*[288]byte)
 
 	for rows.Next() {
 		var sourceIP string
@@ -1104,7 +839,11 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 		}
 
 		// 获取或创建时间槽
-		timeSlots := ganttData[sourceIP]
+		timeSlots, ok := ganttData[sourceIP]
+		if !ok {
+			timeSlots = &[288]byte{}
+			ganttData[sourceIP] = timeSlots
+		}
 
 		// 计算开始和最后一次被看到的时间槽序号
 		startSlot := calculateTimeSlotIndex(startTimestamp, dateStart)
@@ -1116,18 +855,24 @@ func (d *Database) GetGanttData(date string) ([]GanttEntry, error) {
 				timeSlots[i]++
 			}
 		}
-
-		ganttData[sourceIP] = timeSlots
 	}
 
-	// 转换为切片
+	// 转成只含非零槽的输出结构（大部分槽是 0，稀疏传输能显著减小体积）
 	// 同上：空结果返回 [] 而不是 null
-	result := []GanttEntry{}
+	result := []GanttRow{}
 	for sourceIP, timeSlots := range ganttData {
-		result = append(result, GanttEntry{
-			SourceIP:  sourceIP,
-			TimeSlots: timeSlots,
-		})
+		row := GanttRow{
+			SourceIP:    sourceIP,
+			SlotIndexes: []int{},
+			SlotValues:  []int{},
+		}
+		for slot, value := range timeSlots {
+			if value > 0 {
+				row.SlotIndexes = append(row.SlotIndexes, slot)
+				row.SlotValues = append(row.SlotValues, int(value))
+			}
+		}
+		result = append(result, row)
 	}
 
 	// 按SourceIP进行自然排序
