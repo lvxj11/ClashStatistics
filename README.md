@@ -84,20 +84,20 @@ db_vacuum_interval = 24
 
 1. 确保 Clash 服务正在运行
 2. 根据需要修改 `config.toml` 配置文件
-3. 运行应用：
+3. 构建并运行（构建产物统一输出到 `dist/`，已在 `.gitignore` 中排除）：
    ```bash
-   # 直接运行
-   go run main.go
-   
-   # 或构建后运行
-   go build -o clash-statistics .
-   ./clash-statistics
+   go build -o dist/clash-statistics .
+   cd dist && ./clash-statistics
    ```
+   
+   注意：**运行时产生的文件都在当前工作目录的 `data/` 下**（数据库、日志、配置文件），所以建议像上面那样在 `dist/` 里运行 —— 项目根目录就只会留下源码。如果在仓库根目录执行 `go run main.go`，则会在根目录生成 `data/`。
+
 4. 打开浏览器访问 `http://localhost:8080`
 
 ## 目录结构
 
-- `data/` - 存放 SQLite 数据库文件、日志文件和配置文件（`config.toml`）
+- `dist/` - 构建产物目录（本地与 CI 都输出到这里，已被 git 排除；本地运行时的 `data/` 也在其下）
+- `data/` - 运行时目录：SQLite 数据库、日志、配置文件（`config.toml`）。相对**当前工作目录**创建 —— 在 `dist/` 下运行则位于 `dist/data/`；Docker 部署时由挂载卷提供（见 `docker-compose.yml`）
 - `main.go` - 主程序文件
 - `web/` - Web 服务器相关代码
 - `database/` - 数据库操作相关代码
