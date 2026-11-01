@@ -145,6 +145,109 @@
             return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
         }
         
+        // 表格的公共状态与行为：两个统计页的主表与弹窗的明细表共用同一份
+        // 表格模板，各自只提供列定义与"怎么重新取数"
+        //
+        // config: { columns, minWidth, sort, reload(), onRowClick(item) }
+        // 搜索与排序都发回服务端（有行数上限，只有服务端筛选才搜得全）
+        function makeTable(config) {
+            return {
+                columns: config.columns,
+                minWidth: config.minWidth || '',
+                rows: [],
+                total: 0,
+                truncated: false,
+                search: '',
+                sortBy: config.sort || 'total',
+                sortOrder: 'desc',
+                searchTimer: null,
+                onRowClick: config.onRowClick || null,
+
+                // 输入停顿 300ms 才请求，避免每敲一个字符发一次
+                onSearchInput() {
+                    clearTimeout(this.searchTimer);
+                    this.searchTimer = setTimeout(() => config.reload(), 300);
+                },
+                clearSearch() {
+                    this.search = '';
+                    config.reload();
+                },
+                toggleSort(column) {
+                    if (!column) {
+                        return;
+                    }
+                    if (this.sortBy === column) {
+                        this.sortOrder = this.sortOrder === 'desc' ? 'asc' : 'desc';
+                    } else {
+                        this.sortBy = column;
+                        this.sortOrder = 'desc';
+                    }
+                    config.reload();
+                },
+                sortIcon(column) {
+                    if (this.sortBy !== column) {
+                        return '';
+                    }
+                    return this.sortOrder === 'desc' ? '▼' : '▲';
+                },
+                appendParams(params) {
+                    if (this.search) {
+                        params.append('q', this.search);
+                    }
+                    if (this.sortBy) {
+                        params.append('sort', this.sortBy);
+                    }
+                    params.append('order', this.sortOrder);
+                    return params;
+                },
+                applyResult(data) {
+                    this.rows = data.Rows || [];
+                    this.total = data.Total || 0;
+                    this.truncated = !!data.Truncated;
+                }
+            };
+        }
+
+        // 单元格文本：按列的 format 决定怎么显示
+        function cellText(col, item, index) {
+            if (col.format === 'rank') {
+                return index + 1;
+            }
+            const value = item[col.key];
+            if (col.format === 'bytes') {
+                return formatBytes(value);
+            }
+            if (col.format === 'time') {
+                return formatTime(value);
+            }
+            return value;
+        }
+
+        // 单元格类名：对齐、等宽数字、前三名强调等
+        function cellClass(col, item, index) {
+            const classes = [];
+            if (col.format === 'rank') {
+                classes.push('text-center');
+                classes.push(index < 3 ? 'font-bold text-primary' : 'opacity-60');
+            }
+            if (col.format === 'action') {
+                classes.push('text-center');
+            }
+            if (col.align === 'right') {
+                classes.push('text-right');
+            }
+            if (col.format === 'bytes' || col.format === 'number' || col.format === 'time') {
+                classes.push('tabular-nums');
+            }
+            if (col.format === 'time') {
+                classes.push('whitespace-nowrap');
+            }
+            if (col.strong) {
+                classes.push('font-semibold');
+            }
+            return classes.join(' ');
+        }
+
         // 明细弹窗的公共状态与行为：两个统计页共用同一份弹窗模板，
         // kind 决定打哪个接口、用哪个查询参数名
         function detailState(kind) {
@@ -152,23 +255,58 @@
             const param = kind === 'target' ? 'target' : 'ip';
             return {
                 detail: { loading: false, error: null, data: null },
+                detailName: '',
+                detailTable: null,
+                // 默认只按单一维度聚合，线路与规则由弹窗里的开关控制
+                splitChain: false,
+                splitRule: false,
+                // 注意：不能叫 init()。页面组件也是 x-data 的一部分，两边同名的话
+                // Object.assign 会互相覆盖，页面的初始化就跑不到了
+                initDetail() {
+                    const self = this;
+                    this.detailTable = makeTable({
+                        minWidth: 'min-w-[1000px]',
+                        columns: [], // 拿到数据后按 KeyLabel 与拆分开关重建
+                        reload: () => self.fetchDetail()
+                    });
+                },
                 openDetail(name) {
+                    this.detailName = name;
+                    this.splitChain = false;
+                    this.splitRule = false;
+                    this.detailTable.search = '';
+                    this.fetchDetail();
+                },
+                toggleSplit() {
+                    if (this.detailName) {
+                        this.fetchDetail();
+                    }
+                },
+                fetchDetail() {
                     this.detail = { loading: true, error: null, data: null };
                     if (this.$refs.detailModal && !this.$refs.detailModal.open) {
                         this.$refs.detailModal.showModal();
                     }
                     const params = new URLSearchParams();
-                    params.append(param, name);
+                    params.append(param, this.detailName);
+                    if (this.splitChain) {
+                        params.append('splitChain', '1');
+                    }
+                    if (this.splitRule) {
+                        params.append('splitRule', '1');
+                    }
                     if (this.startTime) {
                         params.append('startTime', this.startTime);
                     }
                     if (this.endTime) {
                         params.append('endTime', this.endTime);
                     }
-                    fetch(endpoint + '?' + params.toString())
+                    fetch(endpoint + '?' + this.detailTable.appendParams(params).toString())
                         .then(response => response.json())
                         .then(data => {
                             this.detail = { loading: false, error: null, data: data };
+                            this.detailTable.columns = this.buildDetailColumns(data);
+                            this.detailTable.applyResult(data);
                         })
                         .catch(error => {
                             this.detail = { loading: false, error: '加载明细失败: ' + error.message, data: null };
@@ -178,6 +316,25 @@
                     if (this.$refs.detailModal) {
                         this.$refs.detailModal.close();
                     }
+                },
+                // 明细的列随 KeyLabel 与拆分开关变化，每次拿到数据后重建
+                buildDetailColumns(data) {
+                    const columns = [{ key: 'Key', label: data.KeyLabel || '名称', sort: 'key', format: 'text' }];
+                    if (data.SplitChain) {
+                        columns.push({ key: 'Chain', label: '线路', format: 'text' });
+                    }
+                    if (data.SplitRule) {
+                        columns.push({ key: 'Rule', label: '规则', format: 'text' });
+                    }
+                    columns.push(
+                        { key: 'Download', label: '下载量', sort: 'download', align: 'right', format: 'bytes' },
+                        { key: 'Upload', label: '上传量', sort: 'upload', align: 'right', format: 'bytes' },
+                        { key: 'Total', label: '总计', sort: 'total', align: 'right', format: 'bytes', strong: true },
+                        { key: 'Connections', label: '连接数', sort: 'connections', align: 'right', format: 'number' },
+                        { key: 'FirstSeen', label: '首次访问', sort: 'first', align: 'right', format: 'time' },
+                        { key: 'LastSeen', label: '最近访问', sort: 'last', align: 'right', format: 'time' }
+                    );
+                    return columns;
                 }
             };
         }

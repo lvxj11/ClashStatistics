@@ -1,122 +1,86 @@
 {{define "content"}}
-<div x-data="Object.assign(sourceIPStats(), detailState('client'))" x-init="loadSourceIPStats()">
+<div x-data="Object.assign(sourceIPStats(), detailState('client'))">
     <div x-show="loading" class="flex justify-center py-8">
         <span class="loading loading-spinner loading-lg"></span>
     </div>
-    
+
     <div x-show="error" class="alert alert-error" x-cloak>
         <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <span x-text="error"></span>
     </div>
-    
-    <div x-show="!loading && !error" x-cloak>
-        <!-- 筛选区域：聚合与筛选都在服务端做，前端不再二次重算 -->
-        <div class="mb-6 p-4 bg-base-200/60 border border-base-300 rounded-lg">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div class="flex-1 min-w-[200px]">
-                    <label class="label">
-                        <span>起始时间</span>
-                    </label>
-                    <input 
-                        type="datetime-local" 
-                        x-model="startTime"
-                        @change="loadSourceIPStats()"
-                        class="input w-full"
-                        step="60"
-                    >
-                </div>
 
-                <div class="flex-1 min-w-[200px]">
-                    <label class="label">
-                        <span>结束时间</span>
-                    </label>
-                    <input 
-                        type="datetime-local" 
-                        x-model="endTime"
-                        @change="loadSourceIPStats()"
-                        class="input w-full"
-                        step="60"
-                    >
-                </div>
+    <div x-show="!loading && !error" x-cloak>
+        <!-- 筛选区域：聚合与筛选都在服务端完成，前端不再二次重算 -->
+        <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3">
+            <div class="flex flex-col gap-1">
+                <span class="text-xs font-medium opacity-70">起始时间</span>
+                <input type="datetime-local" x-model="startTime" @change="loadSourceIPStats()" class="input input-sm w-auto" step="60">
             </div>
-            
-            <div x-show="startTime || endTime" class="flex items-center gap-2 mt-4">
-                <button @click="clearFilters" class="btn btn-sm btn-outline">
-                    清除筛选
-                </button>
+            <div class="flex flex-col gap-1">
+                <span class="text-xs font-medium opacity-70">结束时间</span>
+                <input type="datetime-local" x-model="endTime" @change="loadSourceIPStats()" class="input input-sm w-auto" step="60">
             </div>
+            <div class="flex flex-col gap-1">
+                <span class="text-xs font-medium opacity-70">搜索客户端</span>
+                <input type="text" x-model="mainTable.search" @input="mainTable.onSearchInput()" placeholder="IP 片段"
+                       class="input input-sm w-40">
+            </div>
+            <button x-show="startTime || endTime" @click="clearFilters" class="btn btn-sm btn-outline">
+                清除筛选
+            </button>
         </div>
-        
-        <div class="mb-4 text-sm opacity-70 flex flex-wrap items-center gap-2">
-            <span><span x-text="stats.length"></span> 个客户端</span>
-            <span class="opacity-50">·</span>
-            <span>点击任意一行查看该客户端访问了哪些目标</span>
-        </div>
-        
-        <div class="overflow-auto rounded-lg border border-base-300">
-            <table class="table table-zebra table-pin-rows w-full min-w-[860px]">
-                <thead>
-                    <tr>
-                        <th class="w-16 text-center">排名</th>
-                        <th>客户端</th>
-                        <th class="text-right">连接数</th>
-                        <th class="text-right">访问目标数</th>
-                        <th class="text-right">线路数</th>
-                        <th class="text-right">下载量</th>
-                        <th class="text-right">上传量</th>
-                        <th class="text-right">总计</th>
-                        <th class="text-right">最近在线</th>
-                        <th class="w-20 text-center">明细</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <template x-for="(item, index) in stats" :key="item.Target">
-                        <tr class="row-hover cursor-pointer" @click="openDetail(item.Target)">
-                            <td class="text-center" :class="index < 3 ? 'font-bold text-primary' : 'opacity-60'" x-text="index + 1"></td>
-                            <td class="break-all font-medium font-mono text-xs" x-text="item.Target"></td>
-                            <td class="text-right tabular-nums" x-text="item.Connections"></td>
-                            <td class="text-right tabular-nums" x-text="item.Peers"></td>
-                            <td class="text-right tabular-nums" x-text="item.Chains"></td>
-                            <td class="text-right tabular-nums" x-text="formatBytes(item.Download)"></td>
-                            <td class="text-right tabular-nums" x-text="formatBytes(item.Upload)"></td>
-                            <td class="text-right tabular-nums font-semibold" x-text="formatBytes(item.Total)"></td>
-                            <td class="text-right tabular-nums whitespace-nowrap" x-text="formatTime(item.LastSeen)"></td>
-                            <td class="text-center">
-                                <button class="btn btn-xs btn-ghost" @click.stop="openDetail(item.Target)">详情</button>
-                            </td>
-                        </tr>
-                    </template>
-                </tbody>
-            </table>
-        </div>
+
+        <div x-data="{ tbl: mainTable }">{{template "table" .}}</div>
     </div>
-    
-    <div x-show="!loading && !error && stats.length === 0" class="text-center py-8" x-cloak>
+
+    <div x-show="!loading && !error && mainTable.rows.length === 0" class="text-center py-8" x-cloak>
         <div class="alert">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
-            <span>暂无数据</span>
+            <span x-text="mainTable.search ? '没有匹配的客户端' : '暂无数据'"></span>
         </div>
     </div>
-    
+
     {{template "detail-modal" .}}
 </div>
 
 <script>
     function sourceIPStats() {
         return {
-            stats: [],
+            mainTable: null,
             loading: true,
             error: null,
             startTime: '',
             endTime: '',
-            
+
+            init() {
+                const self = this;
+                this.initDetail();
+                this.mainTable = makeTable({
+                    minWidth: 'min-w-[900px]',
+                    columns: [
+                        { key: 'rank', label: '排名', format: 'rank', width: 'w-16' },
+                        { key: 'Target', label: '客户端', sort: 'target', format: 'text' },
+                        { key: 'Connections', label: '连接数', sort: 'connections', align: 'right', format: 'number' },
+                        { key: 'Peers', label: '访问目标数', sort: 'peers', align: 'right', format: 'number' },
+                        { key: 'Chains', label: '线路数', align: 'right', format: 'number' },
+                        { key: 'Download', label: '下载量', sort: 'download', align: 'right', format: 'bytes' },
+                        { key: 'Upload', label: '上传量', sort: 'upload', align: 'right', format: 'bytes' },
+                        { key: 'Total', label: '总计', sort: 'total', align: 'right', format: 'bytes', strong: true },
+                        { key: 'LastSeen', label: '最近在线', sort: 'last', align: 'right', format: 'time' },
+                        { key: 'action', label: '明细', format: 'action', width: 'w-20' }
+                    ],
+                    reload: () => self.loadSourceIPStats(),
+                    onRowClick: item => self.openDetail(item.Target)
+                });
+                self.loadSourceIPStats();
+            },
+
             loadSourceIPStats() {
                 this.loading = true;
-                let url = '/api/sourceip-stats';
                 const params = new URLSearchParams();
                 if (this.startTime) {
                     params.append('startTime', this.startTime);
@@ -124,13 +88,10 @@
                 if (this.endTime) {
                     params.append('endTime', this.endTime);
                 }
-                if (params.toString()) {
-                    url += '?' + params.toString();
-                }
-                fetch(url)
+                fetch('/api/sourceip-stats?' + this.mainTable.appendParams(params).toString())
                     .then(response => response.json())
                     .then(data => {
-                        this.stats = data;
+                        this.mainTable.applyResult(data);
                         this.loading = false;
                     })
                     .catch(error => {
@@ -139,7 +100,7 @@
                         this.loading = false;
                     });
             },
-            
+
             clearFilters() {
                 this.startTime = '';
                 this.endTime = '';

@@ -290,7 +290,9 @@ func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := s.db.GetTargetStats(startTimestamp, endTimestamp)
+	search, sortBy, order := parseTableParams(r)
+
+	stats, err := s.db.GetTargetStats(startTimestamp, endTimestamp, search, sortBy, order)
 	if err != nil {
 		http.Error(w, "获取统计数据失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -308,13 +310,36 @@ func (s *Server) getSourceIPStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := s.db.GetSourceIPStatsWithRange(startTimestamp, endTimestamp)
+	search, sortBy, order := parseTableParams(r)
+
+	stats, err := s.db.GetSourceIPStatsWithRange(startTimestamp, endTimestamp, search, sortBy, order)
 	if err != nil {
 		http.Error(w, "获取客户端统计数据失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	json.NewEncoder(w).Encode(stats)
+}
+
+// parseTableParams 解析表格通用的搜索与排序参数
+// 排序字段只接受白名单里的键，方向只接受 asc / desc，其余一律回落默认值，
+// 绝不能把用户输入拼进 SQL
+func parseTableParams(r *http.Request) (string, string, string) {
+	query := r.URL.Query()
+
+	order := query.Get("order")
+	if order != "asc" && order != "desc" {
+		order = "desc"
+	}
+
+	return query.Get("q"), query.Get("sort"), order
+}
+
+// parseSplitParams 解析明细的拆分开关：splitChain=1 / splitRule=1
+// 默认都不打开，明细只按单一维度（客户端或目标）聚合
+func parseSplitParams(r *http.Request) (bool, bool) {
+	query := r.URL.Query()
+	return query.Get("splitChain") == "1", query.Get("splitRule") == "1"
 }
 
 // getTargetDetail 返回某个目标（域名/IP）的明细
@@ -332,7 +357,11 @@ func (s *Server) getTargetDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := s.db.GetTargetDetail(target, startTimestamp, endTimestamp)
+	splitChain, splitRule := parseSplitParams(r)
+	search, sortBy, order := parseTableParams(r)
+
+	detail, err := s.db.GetTargetDetail(target, startTimestamp, endTimestamp,
+		splitChain, splitRule, search, sortBy, order)
 	if err != nil {
 		http.Error(w, "获取目标明细失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -356,7 +385,11 @@ func (s *Server) getSourceIPDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := s.db.GetSourceIPDetail(sourceIP, startTimestamp, endTimestamp)
+	splitChain, splitRule := parseSplitParams(r)
+	search, sortBy, order := parseTableParams(r)
+
+	detail, err := s.db.GetSourceIPDetail(sourceIP, startTimestamp, endTimestamp,
+		splitChain, splitRule, search, sortBy, order)
 	if err != nil {
 		http.Error(w, "获取客户端明细失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -453,7 +486,8 @@ func (s *Server) showOnlineTime(w http.ResponseWriter, r *http.Request) {
 // renderPage 渲染页面的通用函数
 func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTemplate string) {
 	tmpl, err := template.ParseFS(templateFiles,
-		"templates/base.html", "templates/detail-modal.html", "templates/"+contentTemplate)
+		"templates/base.html", "templates/table.html", "templates/detail-modal.html",
+		"templates/"+contentTemplate)
 	if err != nil {
 		http.Error(w, "解析模板失败: "+err.Error(), http.StatusInternalServerError)
 		return

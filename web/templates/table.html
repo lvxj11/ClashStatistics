@@ -1,0 +1,53 @@
+{{define "table"}}
+<!-- 共享表格：两个统计页的主表与弹窗的明细表都用这一份。
+     用法：外层用 x-data 把某张表的状态绑定成 tbl，再引用本模板。
+     列定义、行数上限提示、表头排序都由 tbl 驱动。
+     注意：注释里不能出现 Go 模板动作，否则会被解析并导致递归 -->
+<div>
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm opacity-70">
+        <span>
+            共 <span x-text="tbl.total"></span> 行<template x-if="tbl.truncated"><span>，当前显示前 <span x-text="tbl.rows.length"></span> 行，可用搜索缩小范围</span></template>
+        </span>
+        <span x-show="tbl.search" class="text-xs">
+            已按「<span x-text="tbl.search"></span>」筛选
+            <button type="button" class="btn btn-xs btn-ghost" @click="tbl.clearSearch()">清除</button>
+        </span>
+    </div>
+
+    <div class="overflow-auto rounded-lg border border-base-300">
+        <table class="table table-zebra table-pin-rows w-full" :class="tbl.minWidth">
+            <thead>
+                <tr>
+                    <template x-for="col in tbl.columns" :key="col.key">
+                        <th class="cursor-pointer select-none whitespace-nowrap"
+                            :class="(col.align === 'right' ? 'text-right ' : '') + (col.width || '')"
+                            @click="tbl.toggleSort(col.sort)">
+                            <span x-text="col.label"></span>
+                            <span class="ml-1 text-[10px] opacity-70" x-text="tbl.sortIcon(col.sort)"></span>
+                        </th>
+                    </template>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="(item, index) in tbl.rows" :key="item.Target || index">
+                    <tr class="row-hover" :class="tbl.onRowClick ? 'cursor-pointer' : ''"
+                        @click="tbl.onRowClick ? tbl.onRowClick(item) : null">
+                        <!-- 注意：x-for 只克隆模板里的第一个根元素，
+                             所以这里只能有一个 td，三种单元格用 x-show 互斥 -->
+                        <template x-for="col in tbl.columns" :key="col.key">
+                            <td :class="cellClass(col, item, index)">
+                                <span x-show="col.format !== 'badge' && col.format !== 'action'"
+                                      x-text="cellText(col, item, index)"></span>
+                                <span x-show="col.format === 'badge'" class="badge badge-sm badge-outline"
+                                      :title="item[col.key]" x-text="item[col.key]"></span>
+                                <button x-show="col.format === 'action'" type="button" class="btn btn-xs btn-ghost"
+                                        @click.stop="tbl.onRowClick(item)">详情</button>
+                            </td>
+                        </template>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}

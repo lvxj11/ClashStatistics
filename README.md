@@ -13,6 +13,8 @@
 - 客户端统计：按客户端（源IP）聚合，点开看它访问了哪些目标、走的哪条线路与命中的规则
 - 在线状态：按天展示每个客户端的在线情况（由存活连接体现）
 - 统计与筛选都在服务端完成，支持按时间范围查询
+- 表格支持服务端搜索与点表头排序，单表最多 500 行，超出时提示用搜索缩小范围
+- 明细弹窗可按线路/规则拆分查看，同样支持搜索与排序
 - 深浅两套主题，右上角一键切换并记忆选择（默认跟随系统偏好）
 - 响应式设计，适配各种屏幕尺寸
 - 实时数据刷新和 API 刷新功能
@@ -66,18 +68,28 @@
 - `/host-stats` - 目标统计页面
 - `/sourceip-stats` - 客户端统计页面
 - `/online-time` - 在线状态页面
-- `/api/stats` - 按目标（域名/IP）聚合的统计数据，支持 `startTime` / `endTime`
-- `/api/sourceip-stats` - 按客户端（源IP）聚合的统计数据，支持 `startTime` / `endTime`
-- `/api/target-detail` - 某个目标的明细（客户端 × 线路 × 规则 的组合逐条列出），参数 `target`
-- `/api/sourceip-detail` - 某个客户端的明细（目标 × 线路 × 规则 的组合逐条列出），参数 `ip`
+- `/api/stats` - 按目标（域名/IP）聚合的统计数据
+- `/api/sourceip-stats` - 按客户端（源IP）聚合的统计数据
+- `/api/target-detail` - 某个目标的明细（客户端 × 线路 × 规则），参数 `target`
+- `/api/sourceip-detail` - 某个客户端的明细（目标 × 线路 × 规则），参数 `ip`
+
+四个接口共用这些参数：
+
+| 参数 | 说明 |
+|---|---|
+| `startTime` / `endTime` | `datetime-local` 格式（`2006-01-02T15:04`），按本地时区解析 |
+| `q` | 按表格第一列模糊搜索，交给服务端过滤 |
+| `sort` | 排序字段白名单：`target` / `download` / `upload` / `total` / `connections` / `peers` / `first` / `last`；明细接口的第一列用 `key`。不在白名单里的值会回落到默认排序 |
+| `order` | `asc` / `desc`，默认 `desc` |
+
+返回 `{Rows, Total, Truncated}`：`Total` 是符合条件的真实条数，`Truncated` 表示被单表上限（500 行，定义在 `database.maxTableRows`）截断。排序发生在 `LIMIT` 之前，所以截断的是"排好序的前 500 行"。
 - `/api/gantt` - 返回在线状态甘特图数据的 JSON 数据，参数 `date`
 - `/refresh` - 手动刷新数据
 
-`startTime` / `endTime` 均为 `datetime-local` 格式（`2006-01-02T15:04`）并按本地时区解析。
 
 ## 版本信息
 
-当前版本：v0.8.1
+当前版本：v0.9.0
 
 ## 技术栈
 

@@ -93,6 +93,14 @@ type Metadata struct {
 	DestinationIPASN  string      `json:"destinationIPASN"`
 }
 
+// StatsResult 表格数据
+// Total 是符合条件的真实条数（不受 LIMIT 影响），用于提示"共 N 行，可用搜索缩小范围"
+type StatsResult struct {
+	Rows      []StatsEntry // 空切片而不是 nil，避免编码成 null
+	Total     int
+	Truncated bool // 是否被 maxTableRows 截断
+}
+
 // StatsEntry 表示统计条目（按目标或按客户端聚合后的结果）
 type StatsEntry struct {
 	Target      string // host/destinationIP，或聚合源IP时的客户端 IP
@@ -121,10 +129,14 @@ type DetailRow struct {
 
 // DetailResponse 明细弹窗的数据
 type DetailResponse struct {
-	Name     string      // 明细对象，如目标名或客户端 IP
-	Subtitle string      // 副标题，如"共 3 个客户端、2 条线路"
-	KeyLabel string      // 第一列表头：客户端 或 目标
-	Rows     []DetailRow // 空切片而不是 nil，避免编码成 null
+	Name       string      // 明细对象，如目标名或客户端 IP
+	Subtitle   string      // 副标题，如"共 3 个客户端、2 条线路"
+	KeyLabel   string      // 第一列表头：客户端 或 目标
+	SplitChain bool        // 是否按线路拆分（决定前端要不要显示线路列）
+	SplitRule  bool        // 是否按规则拆分
+	Rows       []DetailRow // 空切片而不是 nil，避免编码成 null
+	Total      int         // 符合条件的真实条数
+	Truncated  bool        // 是否被 maxTableRows 截断
 }
 
 // 聚合维度表达式：必须与明细查询里用的是同一套，否则点开看到的量和行上的量对不上
@@ -689,49 +701,102 @@ func (d *Database) SaveConnections(connections []Connection) error {
 	return tx.Commit()
 }
 
+// maxTableRows 单张表最多返回多少行
+// 不分页，但这个量级下 DOM 与传输都无压力；超过时用 Total/Truncated 提示缩小范围
+const maxTableRows = 500
+
+// sortColumns 排序字段白名单
+// 用户输入绝不能直接拼进 SQL，只能从这里取值；不在表里的一律回落到默认排序
+var sortColumns = map[string]string{
+	"target":      "target",
+	"download":    "download",
+	"upload":      "upload",
+	"total":       "total",
+	"connections": "connections",
+	"peers":       "peers",
+	"first":       "first_seen",
+	"last":        "last_seen",
+}
+
+// detailSortColumns 明细的排序白名单：第一列在明细查询里叫 key，不叫 target
+var detailSortColumns = map[string]string{
+	"key":         "key",
+	"download":    "download",
+	"upload":      "upload",
+	"total":       "total",
+	"connections": "connections",
+	"first":       "first_seen",
+	"last":        "last_seen",
+}
+
+// buildOrderBy 把排序字段与方向转成 ORDER BY 子句
+func buildOrderBy(allowed map[string]string, sortKey, order string) string {
+	column, ok := allowed[sortKey]
+	if !ok {
+		// 默认按总流量倒序，和改造前的观感一致
+		column, order = "total", "desc"
+	}
+	if order != "asc" {
+		order = "desc"
+	}
+	return fmt.Sprintf("ORDER BY %s %s", column, order)
+}
+
+// escapeLike 转义 LIKE 里的通配符，避免用户输入的 % / _ 被当成通配符
+func escapeLike(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+	return replacer.Replace(value)
+}
+
 // GetTargetStats 按目标（域名/IP）聚合的统计信息
-// startTimestamp / endTimestamp 为 0 表示不限制该侧
-func (d *Database) GetTargetStats(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
+// search 为空表示不过滤；sortBy/order 决定排序（排序必须发生在 LIMIT 之前，
+// 否则被截断的就不是"排好序的前 N 行"）
+func (d *Database) GetTargetStats(startTimestamp, endTimestamp int64,
+	search, sortBy, order string) (*StatsResult, error) {
+
 	// 必须用括号包起来：baseWhere 自身含 OR，若不加括号，后续 AND 条件
 	// 会因为运算符优先级只作用在 OR 的一侧，导致过滤失效
 	baseWhere := "((host IS NOT NULL AND host != '') OR (destination_ip IS NOT NULL AND destination_ip != ''))"
-	timeWhere, args := buildTimeWindow(startTimestamp, endTimestamp)
-
-	whereClause := baseWhere
-	if timeWhere != "" {
-		whereClause += " AND " + timeWhere
-	}
-
-	query := fmt.Sprintf(`
-		SELECT
-			%s AS target,
-			SUM(download) AS download,
-			SUM(upload) AS upload,
-			SUM(download + upload) AS total,
-			COUNT(*) AS connections,
-			COUNT(DISTINCT %s) AS clients,
-			COUNT(DISTINCT %s) AS chains,
-			%s AS first_seen,
-			%s AS last_seen
-		FROM connections
-		WHERE %s
-		GROUP BY %s
-		ORDER BY total DESC
-		LIMIT 200
-	`, targetExpr, sourceIPExpr, chainExpr, firstSeenExpr, lastSeenExpr, whereClause, targetExpr)
-
-	return d.queryStats(query, args...)
+	return d.queryStats(baseWhere, targetExpr, sourceIPExpr, startTimestamp, endTimestamp, search, sortBy, order)
 }
 
 // GetSourceIPStatsWithRange 按客户端（源IP）聚合的统计信息
-// startTimestamp / endTimestamp 为 0 表示不限制该侧
-func (d *Database) GetSourceIPStatsWithRange(startTimestamp, endTimestamp int64) ([]StatsEntry, error) {
-	baseWhere := "((source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner')"
-	timeWhere, args := buildTimeWindow(startTimestamp, endTimestamp)
+func (d *Database) GetSourceIPStatsWithRange(startTimestamp, endTimestamp int64,
+	search, sortBy, order string) (*StatsResult, error) {
 
-	whereClause := baseWhere
+	baseWhere := "((source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner')"
+	return d.queryStats(baseWhere, sourceIPExpr, targetExpr, startTimestamp, endTimestamp, search, sortBy, order)
+}
+
+// queryStats 执行聚合查询
+// groupExpr: 分组维度表达式；peerExpr: 对侧维度（用于统计"客户端数/访问目标数"）
+func (d *Database) queryStats(baseWhere, groupExpr, peerExpr string,
+	startTimestamp, endTimestamp int64, search, sortBy, order string) (*StatsResult, error) {
+
+	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
+
+	conditions := []string{baseWhere}
+	args := []interface{}{}
 	if timeWhere != "" {
-		whereClause += " AND " + timeWhere
+		conditions = append(conditions, timeWhere)
+		args = append(args, timeArgs...)
+	}
+	if search != "" {
+		conditions = append(conditions, fmt.Sprintf("%s LIKE ? ESCAPE '\\'", groupExpr))
+		args = append(args, "%"+escapeLike(search)+"%")
+	}
+	whereClause := strings.Join(conditions, " AND ")
+
+	// 真实条数：不受 LIMIT 影响，用于提示"共 N 行，可用搜索缩小范围"
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (
+			SELECT %s AS target FROM connections WHERE %s GROUP BY %s
+		)
+	`, groupExpr, whereClause, groupExpr)
+
+	var total int
+	if err := d.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, err
 	}
 
 	query := fmt.Sprintf(`
@@ -741,23 +806,18 @@ func (d *Database) GetSourceIPStatsWithRange(startTimestamp, endTimestamp int64)
 			SUM(upload) AS upload,
 			SUM(download + upload) AS total,
 			COUNT(*) AS connections,
-			COUNT(DISTINCT %s) AS clients,
+			COUNT(DISTINCT %s) AS peers,
 			COUNT(DISTINCT %s) AS chains,
 			%s AS first_seen,
 			%s AS last_seen
 		FROM connections
 		WHERE %s
 		GROUP BY %s
-		ORDER BY total DESC
-		LIMIT 100
-	`, sourceIPExpr, targetExpr, chainExpr, firstSeenExpr, lastSeenExpr, whereClause, sourceIPExpr)
+		%s
+		LIMIT %d
+	`, groupExpr, peerExpr, chainExpr, firstSeenExpr, lastSeenExpr,
+		whereClause, groupExpr, buildOrderBy(sortColumns, sortBy, order), maxTableRows)
 
-	return d.queryStats(query, args...)
-}
-
-// queryStats 执行统计查询并扫描结果
-// 空结果返回 [] 而不是 nil，避免 JSON 编码成 null 导致前端报错
-func (d *Database) queryStats(query string, args ...interface{}) ([]StatsEntry, error) {
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -777,11 +837,18 @@ func (d *Database) queryStats(query string, args ...interface{}) ([]StatsEntry, 
 		return nil, err
 	}
 
-	return stats, nil
+	return &StatsResult{
+		Rows:      stats,
+		Total:     total,
+		Truncated: total > len(stats),
+	}, nil
 }
 
-// GetTargetDetail 某个目标的明细：按 客户端 × 线路 × 规则 的组合逐条列出
-func (d *Database) GetTargetDetail(target string, startTimestamp, endTimestamp int64) (*DetailResponse, error) {
+// GetTargetDetail 某个目标的明细
+// 默认只按客户端聚合；splitChain / splitRule 打开时才把线路、规则加进分组维度
+func (d *Database) GetTargetDetail(target string, startTimestamp, endTimestamp int64,
+	splitChain, splitRule bool, search, sortBy, order string) (*DetailResponse, error) {
+
 	if target == "" {
 		return nil, fmt.Errorf("目标不能为空")
 	}
@@ -790,7 +857,8 @@ func (d *Database) GetTargetDetail(target string, startTimestamp, endTimestamp i
 	baseWhere := fmt.Sprintf("(%s) = ?", targetExpr)
 	args := []interface{}{target}
 
-	rows, err := d.queryDetailRows(baseWhere, args, startTimestamp, endTimestamp, sourceIPExpr)
+	rows, total, err := d.queryDetailRows(baseWhere, args, startTimestamp, endTimestamp,
+		sourceIPExpr, splitChain, splitRule, search, sortBy, order)
 	if err != nil {
 		return nil, err
 	}
@@ -802,15 +870,22 @@ func (d *Database) GetTargetDetail(target string, startTimestamp, endTimestamp i
 	}
 
 	return &DetailResponse{
-		Name:     target,
-		Subtitle: fmt.Sprintf("共 %d 个客户端、%d 条线路", peers, chains),
-		KeyLabel: "客户端",
-		Rows:     rows,
+		Name:       target,
+		Subtitle:   fmt.Sprintf("共 %d 个客户端、%d 条线路", peers, chains),
+		KeyLabel:   "客户端",
+		SplitChain: splitChain,
+		SplitRule:  splitRule,
+		Rows:       rows,
+		Total:      total,
+		Truncated:  total > len(rows),
 	}, nil
 }
 
-// GetSourceIPDetail 某个客户端的明细：按 目标 × 线路 × 规则 的组合逐条列出
-func (d *Database) GetSourceIPDetail(sourceIP string, startTimestamp, endTimestamp int64) (*DetailResponse, error) {
+// GetSourceIPDetail 某个客户端的明细
+// 默认只按访问目标聚合；splitChain / splitRule 打开时才把线路、规则加进分组维度
+func (d *Database) GetSourceIPDetail(sourceIP string, startTimestamp, endTimestamp int64,
+	splitChain, splitRule bool, search, sortBy, order string) (*DetailResponse, error) {
+
 	if sourceIP == "" {
 		return nil, fmt.Errorf("客户端不能为空")
 	}
@@ -818,7 +893,8 @@ func (d *Database) GetSourceIPDetail(sourceIP string, startTimestamp, endTimesta
 	baseWhere := fmt.Sprintf("(%s) = ?", sourceIPExpr)
 	args := []interface{}{sourceIP}
 
-	rows, err := d.queryDetailRows(baseWhere, args, startTimestamp, endTimestamp, targetExpr)
+	rows, total, err := d.queryDetailRows(baseWhere, args, startTimestamp, endTimestamp,
+		targetExpr, splitChain, splitRule, search, sortBy, order)
 	if err != nil {
 		return nil, err
 	}
@@ -829,17 +905,23 @@ func (d *Database) GetSourceIPDetail(sourceIP string, startTimestamp, endTimesta
 	}
 
 	return &DetailResponse{
-		Name:     sourceIP,
-		Subtitle: fmt.Sprintf("访问了 %d 个目标、%d 条线路", peers, chains),
-		KeyLabel: "目标",
-		Rows:     rows,
+		Name:       sourceIP,
+		Subtitle:   fmt.Sprintf("访问了 %d 个目标、%d 条线路", peers, chains),
+		KeyLabel:   "目标",
+		SplitChain: splitChain,
+		SplitRule:  splitRule,
+		Rows:       rows,
+		Total:      total,
+		Truncated:  total > len(rows),
 	}, nil
 }
 
-// queryDetailRows 在给定过滤条件下查询明细（按对侧维度 × 线路 × 规则 分组）
+// queryDetailRows 在给定过滤条件下查询明细
 // peerExpr: 看目标明细时传 sourceIPExpr，看客户端明细时传 targetExpr
+// 分组维度由 splitChain / splitRule 决定，未拆分的维度不出现在 SELECT 与 GROUP BY 里
 func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
-	startTimestamp, endTimestamp int64, peerExpr string) ([]DetailRow, error) {
+	startTimestamp, endTimestamp int64, peerExpr string, splitChain, splitRule bool,
+	search, sortBy, order string) ([]DetailRow, int, error) {
 
 	timeWhere, timeArgs := buildTimeWindow(startTimestamp, endTimestamp)
 
@@ -849,12 +931,26 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 		conditions = append(conditions, timeWhere)
 		args = append(args, timeArgs...)
 	}
+	if search != "" {
+		conditions = append(conditions, fmt.Sprintf("%s LIKE ? ESCAPE '\\'", peerExpr))
+		args = append(args, "%"+escapeLike(search)+"%")
+	}
+
+	// 第一列始终是对侧维度，线路与规则按需加入
+	selects := []string{peerExpr + " AS key"}
+	groups := []string{peerExpr}
+	if splitChain {
+		selects = append(selects, chainExpr+" AS chain")
+		groups = append(groups, chainExpr)
+	}
+	if splitRule {
+		selects = append(selects, ruleExpr+" AS rule")
+		groups = append(groups, ruleExpr)
+	}
 
 	query := fmt.Sprintf(`
 		SELECT
-			%s AS key,
-			%s AS chain,
-			%s AS rule,
+			%s,
 			SUM(download) AS download,
 			SUM(upload) AS upload,
 			SUM(download + upload) AS total,
@@ -863,32 +959,56 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 			%s AS last_seen
 		FROM connections
 		WHERE %s
-		GROUP BY %s, %s, %s
-		ORDER BY total DESC
-		LIMIT 200
-	`, peerExpr, chainExpr, ruleExpr, firstSeenExpr, lastSeenExpr,
-		strings.Join(conditions, " AND "), peerExpr, chainExpr, ruleExpr)
+		GROUP BY %s
+		%s
+		LIMIT %d
+	`, strings.Join(selects, ", "), firstSeenExpr, lastSeenExpr,
+		strings.Join(conditions, " AND "), strings.Join(groups, ", "),
+		buildOrderBy(detailSortColumns, sortBy, order), maxTableRows)
+
+	// 真实条数：不受 LIMIT 影响
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (
+			SELECT %s FROM connections WHERE %s GROUP BY %s
+		)
+	`, peerExpr, strings.Join(conditions, " AND "), strings.Join(groups, ", "))
+
+	var total int
+	if err := d.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
+
+	// 按查询里实际出现的列顺序扫描
+	scanArgs := func(row *DetailRow) []interface{} {
+		dest := []interface{}{&row.Key}
+		if splitChain {
+			dest = append(dest, &row.Chain)
+		}
+		if splitRule {
+			dest = append(dest, &row.Rule)
+		}
+		return append(dest, &row.Download, &row.Upload, &row.Total, &row.Connections, &row.FirstSeen, &row.LastSeen)
+	}
 
 	details := []DetailRow{}
 	for rows.Next() {
 		var row DetailRow
-		if err := rows.Scan(&row.Key, &row.Chain, &row.Rule, &row.Download, &row.Upload, &row.Total,
-			&row.Connections, &row.FirstSeen, &row.LastSeen); err != nil {
-			return nil, err
+		if err := rows.Scan(scanArgs(&row)...); err != nil {
+			return nil, 0, err
 		}
 		details = append(details, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return details, nil
+	return details, total, nil
 }
 
 // queryDetailCount 统计明细对象的对侧维度数量与线路数
