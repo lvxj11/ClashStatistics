@@ -535,18 +535,8 @@ func (d *Database) queryStats(baseWhere, groupExpr, peerExpr string,
 
 	whereClause, args := buildConditions(baseWhere, groupExpr, search, startTimestamp, endTimestamp)
 
-	// 真实条数：不受 LIMIT 影响，用于提示"共 N 行，可用搜索缩小范围"
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*) FROM (
-			SELECT %s AS target FROM connections WHERE %s GROUP BY %s
-		)
-	`, groupExpr, whereClause, groupExpr)
-
-	var total int
-	if err := d.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		return nil, err
-	}
-
+	// 多取一行用来判断有没有被上限截断：绝大多数情况取不满，
+	// 就不必再跑一次聚合去数总数（那等于把聚合做两遍）
 	query := fmt.Sprintf(`
 		SELECT
 			%s AS target,
@@ -564,7 +554,7 @@ func (d *Database) queryStats(baseWhere, groupExpr, peerExpr string,
 		%s
 		LIMIT %d
 	`, groupExpr, peerExpr, chainExpr, firstSeenExpr, lastSeenExpr,
-		whereClause, groupExpr, buildOrderBy(sortBy, order), maxTableRows)
+		whereClause, groupExpr, buildOrderBy(sortBy, order), maxTableRows+1)
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
@@ -585,10 +575,27 @@ func (d *Database) queryStats(baseWhere, groupExpr, peerExpr string,
 		return nil, err
 	}
 
+	if len(stats) <= maxTableRows {
+		// 没截断：取到的行数就是总数
+		return &StatsResult{Rows: stats, Total: len(stats), Truncated: false}, nil
+	}
+
+	// 截断了才需要真实总数，用于提示"共 N 行，可用搜索缩小范围"
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (
+			SELECT %s AS target FROM connections WHERE %s GROUP BY %s
+		)
+	`, groupExpr, whereClause, groupExpr)
+
+	var total int
+	if err := d.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, err
+	}
+
 	return &StatsResult{
-		Rows:      stats,
+		Rows:      stats[:maxTableRows],
 		Total:     total,
-		Truncated: total > len(stats),
+		Truncated: true,
 	}, nil
 }
 
@@ -703,19 +710,7 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 		LIMIT %d
 	`, strings.Join(selects, ", "), firstSeenExpr, lastSeenExpr,
 		whereClause, strings.Join(groups, ", "),
-		buildOrderBy(sortBy, order), maxTableRows)
-
-	// 真实条数：不受 LIMIT 影响
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*) FROM (
-			SELECT %s FROM connections WHERE %s GROUP BY %s
-		)
-	`, peerExpr, whereClause, strings.Join(groups, ", "))
-
-	var total int
-	if err := d.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
+		buildOrderBy(sortBy, order), maxTableRows+1)
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
@@ -747,7 +742,24 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 		return nil, 0, err
 	}
 
-	return details, total, nil
+	if len(details) <= maxTableRows {
+		// 没截断：取到的行数就是总数，省掉一次聚合查询
+		return details, len(details), nil
+	}
+
+	// 截断了才需要真实总数
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (
+			SELECT %s FROM connections WHERE %s GROUP BY %s
+		)
+	`, peerExpr, whereClause, strings.Join(groups, ", "))
+
+	var total int
+	if err := d.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	return details[:maxTableRows], total, nil
 }
 
 // queryDetailCount 统计明细对象的对侧维度数量与线路数

@@ -32,16 +32,20 @@
                 <template x-for="(item, index) in tbl.rows" :key="item.Target || index">
                     <tr class="row-hover" :class="tbl.onRowClick ? 'cursor-pointer' : ''"
                         @click="tbl.onRowClick ? tbl.onRowClick(item) : null">
-                        <!-- 注意：x-for 只克隆模板里的第一个根元素，
-                             所以这里只能有一个 td，三种单元格用 x-show 互斥 -->
+                        <!-- x-for 只克隆模板里的第一个根元素，所以根元素只能是这一个 td；
+                             三种单元格用 x-if 放在 td 内部（x-if 不成立时不会创建元素），
+                             避免每个单元格都塞 3 个子元素 —— 500 行 × 10 列时差别很大 -->
                         <template x-for="col in tbl.columns" :key="col.key">
                             <td :class="cellClass(col, item, index)">
-                                <span x-show="col.format !== 'badge' && col.format !== 'action'"
-                                      x-text="cellText(col, item, index)"></span>
-                                <span x-show="col.format === 'badge'" class="badge badge-sm badge-outline"
-                                      :title="item[col.key]" x-text="item[col.key]"></span>
-                                <button x-show="col.format === 'action'" type="button" class="btn btn-xs btn-ghost"
-                                        @click.stop="tbl.onRowClick(item)">详情</button>
+                                <template x-if="col.format !== 'badge' && col.format !== 'action'">
+                                    <span x-text="cellText(col, item, index)"></span>
+                                </template>
+                                <template x-if="col.format === 'badge'">
+                                    <span class="badge badge-sm badge-outline" :title="item[col.key]" x-text="item[col.key]"></span>
+                                </template>
+                                <template x-if="col.format === 'action'">
+                                    <button type="button" class="btn btn-xs btn-ghost" @click.stop="tbl.onRowClick(item)">详情</button>
+                                </template>
                             </td>
                         </template>
                     </tr>
