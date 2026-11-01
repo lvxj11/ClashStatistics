@@ -1,11 +1,11 @@
 package utils
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // Config 存储配置信息
@@ -47,7 +47,7 @@ func hasValidEnvironmentVariables() bool {
 }
 
 // LoadConfig 加载配置
-// 优先级：环境变量 > config.ini > 默认值（逐项覆盖，而非整体二选一）
+// 优先级：环境变量 > config.toml > 默认值（逐项覆盖，而非整体二选一）
 func LoadConfig() (*Config, error) {
 	config := &Config{
 		ClashHost:        "127.0.0.1:9090",
@@ -64,7 +64,7 @@ func LoadConfig() (*Config, error) {
 		return config, fmt.Errorf("创建数据目录失败: %v", err)
 	}
 
-	configPath := "./data/config.ini"
+	configPath := "./data/config.toml"
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// 配置文件不存在，尝试生成默认配置文件
 		if err := GenerateDefaultConfig(config); err != nil {
@@ -77,7 +77,7 @@ func LoadConfig() (*Config, error) {
 			}
 		} else if !hasValidEnvironmentVariables() {
 			// 裸机首次运行：提示用户修改配置后重启
-			return config, fmt.Errorf("配置文件不存在，已生成默认配置文件 ./data/config.ini，请根据需要修改配置后重新启动程序")
+			return config, fmt.Errorf("配置文件不存在，已生成默认配置文件 ./data/config.toml，请根据需要修改配置后重新启动程序")
 		}
 	} else {
 		// 加载配置文件
@@ -92,84 +92,91 @@ func LoadConfig() (*Config, error) {
 	return config, nil
 }
 
-// configItem 描述一个配置项在配置文件里的位置、对应的环境变量，以及怎么赋值。
-// 文件解析与环境变量覆盖共用这张表，避免"加了配置项只改一处"的漏改
+// configItem 描述一个配置项：对应的环境变量、显示用的名字，以及怎么赋值。
+// 环境变量覆盖与默认值共用这张表，新增配置项只改一处
 type configItem struct {
-	Section string
-	Key     string
-	Env     string
-	Apply   func(*Config, string) // 统一用字符串传入，数值项在这里自己转换
+	Env   string
+	Name  string                // 仅用于日志显示，如 clash.host
+	Apply func(*Config, string) // 统一用字符串传入，数值项在这里自己转换
 }
 
 var configItems = []configItem{
-	{"clash", "host", "CLASH_HOST", func(c *Config, v string) { c.ClashHost = v }},
-	{"clash", "secret", "CLASH_SECRET", func(c *Config, v string) { c.ClashSecret = v }},
-	{"clash", "interval", "CLASH_INTERVAL", func(c *Config, v string) {
+	{"CLASH_HOST", "clash.host", func(c *Config, v string) { c.ClashHost = v }},
+	{"CLASH_SECRET", "clash.secret", func(c *Config, v string) { c.ClashSecret = v }},
+	{"CLASH_INTERVAL", "clash.interval", func(c *Config, v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.ClashInterval = n
 		}
 	}},
-	{"server", "log_level", "LOG_LEVEL", func(c *Config, v string) { c.LogLevel = v }},
-	{"server", "web_port", "WEB_PORT", func(c *Config, v string) { c.WebPort = v }},
-	{"server", "db_cleanup_days", "DB_CLEANUP_DAYS", func(c *Config, v string) {
+	{"LOG_LEVEL", "server.log_level", func(c *Config, v string) { c.LogLevel = v }},
+	{"WEB_PORT", "server.web_port", func(c *Config, v string) { c.WebPort = v }},
+	{"DB_CLEANUP_DAYS", "server.db_cleanup_days", func(c *Config, v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.DBCleanupDays = n
 		}
 	}},
-	{"server", "db_vacuum_interval", "DB_VACUUM_INTERVAL", func(c *Config, v string) {
+	{"DB_VACUUM_INTERVAL", "server.db_vacuum_interval", func(c *Config, v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.DBVacuumInterval = n
 		}
 	}},
 }
 
-// loadConfigFile 从指定路径读取配置文件，覆盖已有配置项
+// configFile 对应 config.toml 的结构
+// 只在反序列化时使用，运行时仍用扁平的 Config，避免改动所有调用方
+type configFile struct {
+	Clash struct {
+		Host     string `toml:"host"`
+		Secret   string `toml:"secret"`
+		Interval int    `toml:"interval"`
+	} `toml:"clash"`
+	Server struct {
+		LogLevel         string `toml:"log_level"`
+		WebPort          string `toml:"web_port"`
+		DBCleanupDays    int    `toml:"db_cleanup_days"`
+		DBVacuumInterval int    `toml:"db_vacuum_interval"`
+	} `toml:"server"`
+}
+
+// loadConfigFile 读取 config.toml，覆盖已有配置项
+// 只覆盖文件里真正写了的项，没写的保持默认值 —— 配置可以只写要改的那几项
 func loadConfigFile(config *Config, configPath string) error {
-	file, err := os.Open(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	var currentSection string
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		// 跳过空行和注释
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-			continue
-		}
-
-		// 处理节名 [clash]
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			currentSection = strings.ToLower(strings.Trim(line, "[]"))
-			continue
-		}
-
-		// 处理键值对
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := strings.ToLower(strings.TrimSpace(parts[0]))
-		// 移除引号（如果存在）
-		value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
-
-		for _, item := range configItems {
-			if item.Section == currentSection && item.Key == key {
-				item.Apply(config, value)
-				break
-			}
-		}
+	var f configFile
+	if err := toml.Unmarshal(data, &f); err != nil {
+		return fmt.Errorf("解析配置文件 %s 失败: %v", configPath, err)
 	}
 
-	return scanner.Err()
+	if f.Clash.Host != "" {
+		config.ClashHost = f.Clash.Host
+	}
+	if f.Clash.Secret != "" {
+		config.ClashSecret = f.Clash.Secret
+	}
+	if f.Clash.Interval > 0 {
+		config.ClashInterval = f.Clash.Interval
+	}
+	if f.Server.LogLevel != "" {
+		config.LogLevel = f.Server.LogLevel
+	}
+	if f.Server.WebPort != "" {
+		config.WebPort = f.Server.WebPort
+	}
+	if f.Server.DBCleanupDays > 0 {
+		config.DBCleanupDays = f.Server.DBCleanupDays
+	}
+	if f.Server.DBVacuumInterval > 0 {
+		config.DBVacuumInterval = f.Server.DBVacuumInterval
+	}
+
+	return nil
 }
 
-// applyEnvOverrides 用环境变量逐项覆盖配置
+// applyEnvOverrides 用环境变量逐项覆盖配置（最高优先级）
 func applyEnvOverrides(config *Config) {
 	for _, item := range configItems {
 		value := os.Getenv(item.Env)
@@ -177,31 +184,31 @@ func applyEnvOverrides(config *Config) {
 			continue
 		}
 		item.Apply(config, value)
-		GetLogger().Debug("使用环境变量覆盖 %s.%s: %s\n", item.Section, item.Key, value)
+		GetLogger().Debug("使用环境变量覆盖 %s: %s\n", item.Name, value)
 	}
 }
 
-// GenerateDefaultConfig 生成默认配置文件
+// GenerateDefaultConfig 生成默认的 config.toml
 func GenerateDefaultConfig(config *Config) error {
-	content := `# ClashStatistics 配置文件
+	content := `# ClashStatistics 配置文件（TOML 格式）
 # 请根据实际情况修改以下配置
 
 [clash]
-# Clash API 地址和端口
-host = 127.0.0.1:9090
-# Clash API 密钥（如果设置了的话）
-secret = 
+# Clash / Mihomo 外部控制器的地址与端口
+host = "127.0.0.1:9090"
+# 外部控制器密钥（没有设置就留空）
+secret = ""
 # 数据获取间隔（毫秒）
 interval = 1000
 
 [server]
 # 日志级别：debug, info, warn, error
-log_level = warn
+log_level = "warn"
 # Web 服务器端口号
-web_port = 8080
+web_port = "8080"
 # 数据库数据保留天数
 db_cleanup_days = 7
-# 数据库VACUUM执行间隔（小时）
+# 数据库 VACUUM 执行间隔（小时）
 db_vacuum_interval = 24
 `
 
@@ -210,11 +217,11 @@ db_vacuum_interval = 24
 		return fmt.Errorf("创建数据目录失败: %v", err)
 	}
 
-	err := os.WriteFile("./data/config.ini", []byte(content), 0644)
+	err := os.WriteFile("./data/config.toml", []byte(content), 0644)
 	if err != nil {
 		return fmt.Errorf("生成默认配置文件失败: %v", err)
 	}
 
-	GetLogger().Println("已生成默认配置文件 ./data/config.ini，请根据需要修改配置后重新启动程序")
+	GetLogger().Println("已生成默认配置文件 ./data/config.toml，请根据需要修改配置后重新启动程序")
 	return nil
 }

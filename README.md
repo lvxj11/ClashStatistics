@@ -33,35 +33,57 @@ Clash 生态里已经有很多很棒的面板（Yacd、MetaCubeXD、OpenClash �
 - 表格支持服务端搜索与点表头排序，单表最多 500 行，超出时提示用搜索缩小范围
 - 明细弹窗可按线路 / 规则拆分查看，同样支持搜索与排序
 - 数据自动保存到 SQLite 数据库，定期清理过期数据（默认保留 7 天）
-- 支持 `config.ini` 与环境变量两种配置方式
+- 支持 `config.toml`（TOML 格式）与环境变量两种配置方式
 - 深浅两套主题，右上角一键切换并记忆选择（默认跟随系统偏好）
 - 响应式设计，适配各种屏幕尺寸
 - 实时数据刷新和 API 刷新功能
 
 ## 配置
 
-应用读取运行目录下的 `./data/config.ini`。首次运行且没有任何环境变量时会生成该文件并提示修改；容器/裸机都可以通过环境变量配置，无需配置文件。
+配置文件是 **TOML 格式**，路径为运行目录下的 `./data/config.toml`：
 
-配置优先级（逐项覆盖）：**环境变量 > config.ini > 默认值**
+```toml
+[clash]
+host = "127.0.0.1:9090"
+secret = ""
+interval = 1000
 
-`config.ini` 包含以下配置项：
+[server]
+log_level = "warn"
+web_port = "8080"
+db_cleanup_days = 7
+db_vacuum_interval = 24
+```
 
-| 配置项 | 环境变量 | 默认值 |
-|--------|----------|--------|
-| `host` | `CLASH_HOST` | `127.0.0.1:9090` |
-| `secret` | `CLASH_SECRET` | 空 |
-| `interval` | `CLASH_INTERVAL` | `1000` |
-| `web_port` | `WEB_PORT` | `8080` |
-| `log_level` | `LOG_LEVEL` | `warn` |
-| `db_cleanup_days` | `DB_CLEANUP_DAYS` | `7` |
-| `db_vacuum_interval` | `DB_VACUUM_INTERVAL` | `24` |
+文件里没写的项会保留默认值，所以只需要写要改的那几项。字符串必须加引号（TOML 语法要求，例如 `host = "10.0.1.2:9090"`）。
 
-即：设置了的环境变量覆盖对应的配置项，没设置的继续使用配置文件中的值，两者都没有才用默认值。
+首次运行且没有任何环境变量时会生成该文件并提示修改；容器 / 裸机都可以通过环境变量配置，无需配置文件。
+
+配置优先级（逐项覆盖）：**环境变量 > config.toml > 默认值** —— 设置了的环境变量覆盖对应的配置项，没设置的继续用配置文件里的值，两者都没有才用默认值。
+
+### `[clash]` —— 数据源
+
+本面板从这里**只读**取 `/connections`，不改任何配置。
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| `host` | `CLASH_HOST` | `127.0.0.1:9090` | 外部控制器的地址与端口（对应 Clash 配置里的 `external-controller`）。支持 Clash 与 Mihomo |
+| `secret` | `CLASH_SECRET` | 空 | 外部控制器的鉴权密钥（对应 Clash 配置里的 `secret`）。设置后请求会带 `Authorization: Bearer <secret>`；留空则不鉴权 |
+| `interval` | `CLASH_INTERVAL` | `1000` | 轮询间隔（毫秒）。它同时作为 `/connections?interval=` 参数传给 API，Clash 会按该间隔返回连接快照；间隔越小越容易抓到短连接，但请求也更频繁 |
+
+### `[server]` —— 本面板自身
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| `web_port` | `WEB_PORT` | `8080` | Web 服务监听端口 |
+| `log_level` | `LOG_LEVEL` | `warn` | 日志级别：`debug` / `info` / `warn` / `error`，写入 `data/clash_statistics.log` |
+| `db_cleanup_days` | `DB_CLEANUP_DAYS` | `7` | 连接数据的保留天数。启动时清理一次，之后每 24 小时清理一次 |
+| `db_vacuum_interval` | `DB_VACUUM_INTERVAL` | `24` | SQLite `VACUUM` 的执行间隔（小时），用于回收删除数据后的空闲空间。**启动时不执行**，避免拖慢启动 |
 
 ## 使用方法
 
 1. 确保 Clash 服务正在运行
-2. 根据需要修改 `config.ini` 配置文件
+2. 根据需要修改 `config.toml` 配置文件
 3. 运行应用：
    ```bash
    # 直接运行
@@ -75,7 +97,7 @@ Clash 生态里已经有很多很棒的面板（Yacd、MetaCubeXD、OpenClash �
 
 ## 目录结构
 
-- `data/` - 存放 SQLite 数据库文件、日志文件和配置文件（`config.ini`）
+- `data/` - 存放 SQLite 数据库文件、日志文件和配置文件（`config.toml`）
 - `main.go` - 主程序文件
 - `web/` - Web 服务器相关代码
 - `database/` - 数据库操作相关代码
@@ -108,7 +130,7 @@ Clash 生态里已经有很多很棒的面板（Yacd、MetaCubeXD、OpenClash �
 
 ## 版本信息
 
-当前版本：v0.9.3
+当前版本：v0.9.4
 
 ## 技术栈
 
