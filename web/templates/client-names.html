@@ -1,0 +1,268 @@
+{{define "content"}}
+<div x-data="clientNamesPage()">
+    <!-- 说明：手动优先、自动兜底、展示规则 -->
+    <div class="mb-5 rounded-lg border border-base-300 bg-base-200/40 p-4 text-sm leading-relaxed">
+        <p class="font-semibold mb-1">客户端名称</p>
+        <p class="opacity-80">
+            为客户端 IP 指定一个便于识别的名称，可选填备注。名称只是辅助信息：
+            <span class="font-medium">IP 仍是主键</span>，排序、搜索、明细下钻都按 IP 进行。
+            统计页与在线状态页会在 IP 后面以 <span class="font-mono">IP (名称)</span> 的形式显示，
+            <span class="font-medium">备注仅作鼠标悬浮提示</span>。
+        </p>
+        <p class="opacity-80 mt-1">
+            <span class="font-medium">手动配置始终优先</span>：手动名称非空时，自动识别的结果一律忽略（但保留，清除手动后可回退）。
+            自动识别（DHCP option 12 优先于 mDNS，另有连接元数据）只是兜底，<span class="font-medium">不保证一定能获取到</span>。
+        </p>
+    </div>
+
+    <!-- 新增 / 编辑 -->
+    <div class="mb-5 rounded-lg border border-base-300 p-4">
+        <p class="font-semibold mb-3 text-sm" x-text="form.ip ? '编辑客户端' : '新增客户端'"></p>
+        <div class="flex flex-wrap items-end gap-3">
+            <label class="flex flex-col gap-1">
+                <span class="text-xs font-medium opacity-70">客户端 IP</span>
+                <input type="text" x-model="form.ip" list="known-ips" placeholder="192.168.1.5"
+                       class="input input-sm w-52 font-mono" />
+                <datalist id="known-ips">
+                    <template x-for="ip in knownIPs" :key="ip">
+                        <option :value="ip"></option>
+                    </template>
+                </datalist>
+            </label>
+            <label class="flex flex-col gap-1">
+                <span class="text-xs font-medium opacity-70">名称</span>
+                <input type="text" x-model="form.name" placeholder="客厅电视" class="input input-sm w-48" />
+            </label>
+            <label class="flex flex-col gap-1">
+                <span class="text-xs font-medium opacity-70">备注（仅悬浮显示）</span>
+                <input type="text" x-model="form.note" placeholder="卧室旧盒子" class="input input-sm w-56" />
+            </label>
+            <button type="button" class="btn btn-sm btn-primary" :disabled="saving" @click="save()">保存</button>
+            <button type="button" class="btn btn-sm btn-ghost" x-show="form.ip" @click="resetForm()">取消</button>
+        </div>
+    </div>
+
+    <!-- 批量导入 -->
+    <div class="mb-5 rounded-lg border border-base-300 p-4">
+        <p class="font-semibold mb-1 text-sm">批量导入</p>
+        <p class="text-xs opacity-70 mb-2">
+            每行一条，用空格 / 制表符 / 逗号分隔：<span class="font-mono">IP 名称 备注</span>（备注可省）。以 <span class="font-mono">#</span> 开头的行为注释。
+        </p>
+        <textarea x-model="bulk" class="textarea w-full h-28 font-mono text-xs"
+                  placeholder="192.168.1.5 客厅电视 卧室旧盒子&#10;192.168.1.6, 手机&#10;192.168.1.7	NAS"></textarea>
+        <div class="mt-2">
+            <button type="button" class="btn btn-sm btn-outline" :disabled="saving" @click="importBulk()">导入</button>
+        </div>
+    </div>
+
+    <!-- 结果提示 -->
+    <div x-show="message" x-cloak class="mb-4 alert" :class="messageKind === 'error' ? 'alert-error' : 'alert-success'">
+        <span x-text="message"></span>
+    </div>
+
+    <!-- 列表 -->
+    <div x-show="!loaded" class="flex justify-center py-8">
+        <span class="loading loading-spinner loading-lg"></span>
+    </div>
+
+    <div x-show="loaded" x-cloak>
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm opacity-70">
+            <span>
+                共 <span x-text="rows().length"></span> 个客户端，
+                手动命名 <span x-text="manualCount()"></span> 个，
+                自动识别 <span x-text="autoCount()"></span> 个
+            </span>
+            <button type="button" class="btn btn-xs btn-ghost" @click="reload()">刷新</button>
+        </div>
+        <div class="overflow-auto rounded-lg border border-base-300">
+            <table class="table table-zebra table-sm w-full min-w-[860px]">
+                <thead>
+                    <tr>
+                        <th class="w-[220px]">客户端 IP</th>
+                        <th>生效名称</th>
+                        <th class="w-[140px]">来源</th>
+                        <th>自动识别（兜底）</th>
+                        <th>备注</th>
+                        <th class="w-[130px] text-right">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="row in rows()" :key="row.ip">
+                        <tr class="row-hover">
+                            <td class="font-mono text-xs break-all" x-text="row.ip"></td>
+                            <td class="break-all">
+                                <span x-text="row.name || '—'" :class="row.name ? 'font-medium' : 'opacity-40'"></span>
+                            </td>
+                            <td>
+                                <template x-if="row.source">
+                                    <span class="badge badge-sm"
+                                          :class="row.source === 'manual' ? 'badge-primary' : 'badge-outline'"
+                                          x-text="sourceLabel(row.source)"></span>
+                                </template>
+                                <span x-show="!row.source" class="text-xs opacity-40">未命名</span>
+                            </td>
+                            <td class="text-xs break-all">
+                                <span x-text="row.auto_name || '—'" :class="row.auto_name ? '' : 'opacity-40'"></span>
+                                <span x-show="row.auto_source" class="ml-1 opacity-60"
+                                      x-text="row.auto_source ? '(' + sourceLabel(row.auto_source) + ')' : ''"></span>
+                            </td>
+                            <td class="text-xs break-all opacity-80" x-text="row.note || '—'"></td>
+                            <td class="text-right whitespace-nowrap">
+                                <button type="button" class="btn btn-xs btn-ghost" @click="edit(row)">编辑</button>
+                                <button type="button" class="btn btn-xs btn-ghost text-error"
+                                        :disabled="saving" x-show="row.configured"
+                                        @click="clear(row.ip)">清除</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        <p x-show="rows().length === 0" class="text-center py-8 text-sm opacity-60">暂无客户端数据</p>
+    </div>
+</div>
+
+<script>
+    function clientNamesPage() {
+        return {
+            form: { ip: '', name: '', note: '' },
+            bulk: '',
+            message: '',
+            messageKind: '',
+            saving: false,
+
+            // 单一数据源：全局 store。所有读取都是响应式的，保存后 reload 即刷新整页列表。
+            get records() { return Alpine.store('clientNames').names; },
+            get knownIPs() { return Alpine.store('clientNames').knownIPs; },
+            get loaded() { return Alpine.store('clientNames').loaded; },
+
+            reload() { return Alpine.store('clientNames').reload(); },
+
+            rows() {
+                const recs = this.records || {};
+                const known = this.knownIPs || [];
+                const ips = new Set([...Object.keys(recs), ...known]);
+                return [...ips].map(ip => {
+                    const r = recs[ip] || {};
+                    return {
+                        ip: ip,
+                        name: r.name || '',
+                        source: r.source || '',
+                        note: r.note || '',
+                        manual_name: r.manual_name || '',
+                        auto_name: r.auto_name || '',
+                        auto_source: r.auto_source || '',
+                        configured: !!r.manual_name
+                    };
+                }).sort((a, b) => a.ip.localeCompare(b.ip, undefined, { numeric: true }));
+            },
+
+            manualCount() {
+                return Object.values(this.records || {}).filter(r => r.manual_name).length;
+            },
+            autoCount() {
+                return Object.values(this.records || {}).filter(r => r.auto_name && !r.manual_name).length;
+            },
+
+            sourceLabel(src) {
+                switch (src) {
+                    case 'manual': return '手动';
+                    case 'dhcp_option12': return '自动·DHCP';
+                    case 'mdns': return '自动·mDNS';
+                    case 'inbound_user': return '自动·入站用户';
+                    case 'inbound_name': return '自动·入站名';
+                    case 'process': return '自动·进程';
+                    default: return src || '—';
+                }
+            },
+
+            edit(row) {
+                this.form = { ip: row.ip, name: row.manual_name || '', note: row.note || '' };
+                this.message = '';
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            },
+            resetForm() {
+                this.form = { ip: '', name: '', note: '' };
+                this.message = '';
+            },
+            setMsg(text, kind) { this.message = text; this.messageKind = kind; },
+
+            async save() {
+                const ip = this.form.ip.trim();
+                if (!ip) { this.setMsg('请填写客户端 IP', 'error'); return; }
+                this.saving = true;
+                try {
+                    const res = await fetch('/api/client-names', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.form)
+                    });
+                    if (!res.ok) throw new Error(await res.text());
+                    this.resetForm();
+                    await this.reload();
+                    this.setMsg('已保存', 'ok');
+                } catch (e) {
+                    this.setMsg('保存失败: ' + e.message, 'error');
+                }
+                this.saving = false;
+            },
+
+            async clear(ip) {
+                this.saving = true;
+                try {
+                    const res = await fetch('/api/client-names?ip=' + encodeURIComponent(ip), { method: 'DELETE' });
+                    if (!res.ok) throw new Error(await res.text());
+                    await this.reload();
+                    this.setMsg('已清除手动配置（自动名称保留为兜底）', 'ok');
+                } catch (e) {
+                    this.setMsg('清除失败: ' + e.message, 'error');
+                }
+                this.saving = false;
+            },
+
+            parseBulk() {
+                const items = [];
+                for (const raw of this.bulk.split(/\r?\n/)) {
+                    const line = raw.trim();
+                    if (!line || line.startsWith('#')) continue;
+                    let parts;
+                    if (line.includes('\t') || line.includes(',')) {
+                        parts = line.split(/[\t,]+/).map(s => s.trim());
+                    } else {
+                        const m = line.match(/^(\S+)\s+(.+)$/);
+                        parts = m ? [m[1], m[2]] : [line];
+                    }
+                    const ip = (parts[0] || '').trim();
+                    if (!ip) continue;
+                    items.push({
+                        ip: ip,
+                        name: (parts[1] || '').trim(),
+                        note: (parts[2] || '').trim()
+                    });
+                }
+                return items;
+            },
+
+            async importBulk() {
+                const items = this.parseBulk();
+                if (!items.length) { this.setMsg('没有解析到有效行', 'error'); return; }
+                this.saving = true;
+                try {
+                    const res = await fetch('/api/client-names', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ items: items })
+                    });
+                    if (!res.ok) throw new Error(await res.text());
+                    this.bulk = '';
+                    await this.reload();
+                    this.setMsg('已导入 ' + items.length + ' 条', 'ok');
+                } catch (e) {
+                    this.setMsg('导入失败: ' + e.message, 'error');
+                }
+                this.saving = false;
+            }
+        };
+    }
+</script>
+{{end}}

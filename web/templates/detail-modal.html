@@ -5,7 +5,15 @@
     <div class="modal-box modal-box-wide max-h-[85vh] flex flex-col gap-4">
         <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
-                <h3 class="font-semibold break-all" x-text="detail.data ? detail.data.Name : ''"></h3>
+                <h3 class="font-semibold break-all">
+                    <span x-text="detail.data ? detail.data.Name : ''"></span>
+                    <!-- 看某个客户端的明细时，标题 Name 就是客户端 IP（此时 KeyLabel 为'目标'） -->
+                    <template x-if="detail.data && detail.data.KeyLabel === '目标' && clientLabel(detail.data.Name)">
+                        <span class="ml-1.5 font-normal text-sm opacity-60"
+                              x-text="'(' + clientLabel(detail.data.Name) + ')'"
+                              :title="clientTitle(detail.data.Name)"></span>
+                    </template>
+                </h3>
                 <p class="text-sm opacity-70" x-text="detail.data ? detail.data.Subtitle : ''"></p>
                 <!-- 拆分开关：默认只按单一维度，打开后才把线路/规则加进来 -->
                 <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -54,7 +62,15 @@
                         <tbody>
                             <template x-for="(row, rowIndex) in tbl.rows" :key="rowIndex">
                                 <tr class="row-hover">
-                                    <td class="break-all font-medium" x-text="row.Key"></td>
+                                    <td class="break-all font-medium">
+                                        <span x-text="row.Key"></span>
+                                        <!-- 看某个目标的明细时，第一列 Key 是客户端 IP（此时 KeyLabel 为'客户端'） -->
+                                        <template x-if="detail.data && detail.data.KeyLabel === '客户端' && clientLabel(row.Key)">
+                                            <span class="ml-1.5 opacity-60"
+                                                  x-text="'(' + clientLabel(row.Key) + ')'"
+                                                  :title="clientTitle(row.Key)"></span>
+                                        </template>
+                                    </td>
                                     <!-- 拆分开关打开时才出现这两列：直接放在 tr 里，
                                          不像通用模板那样需要给每个单元格加包装元素 -->
                                     <template x-if="detail.data && detail.data.SplitChain">

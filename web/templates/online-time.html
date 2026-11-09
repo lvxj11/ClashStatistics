@@ -1,5 +1,11 @@
 {{define "content"}}
 <div x-data="onlineTime()" x-init="loadGanttChart()">
+    <!-- 标签列宽度探针：离屏量出所有行里最长的 IP (名称) 像素宽。
+         不用字符数估算：IP 是等宽字体、名称字号更小且非等宽，中文名误差尤其大 -->
+    <div x-ref="labelProbe" aria-hidden="true"
+         class="invisible absolute top-0 left-0 whitespace-nowrap font-medium pointer-events-none"
+         style="width: max-content"></div>
+
     <!-- 第一行：筛选控件。标签统一放在控件上方，避免"标签 + 控件"横排时挤在一起 -->
     <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3">
         <div class="flex flex-col gap-1">
@@ -49,10 +55,10 @@
     </div>
 
     <div x-show="!loading && !error && viewRows.length > 0" class="overflow-x-auto" x-cloak>
-        <div class="font-mono leading-relaxed space-y-2">
+        <div class="font-mono leading-relaxed space-y-2" :style="'--label-w:' + labelWidth + 'px'">
             <!-- 时间轴：标签每 3 小时一个，整点短刻度、6 小时长刻度，右端补边界 -->
             <div class="flex items-center sticky top-0 bg-base-100 z-10">
-                <div class="w-[200px] flex-shrink-0"></div>
+                <div class="flex-shrink-0" style="width: var(--label-w)"></div>
                 <div class="flex-1 relative min-w-[600px] border-r border-base-content/20">
                     <div class="absolute inset-0 flex items-center"><div class="h-px bg-base-content/20 w-full"></div></div>
                     <!-- 查看今天时的"现在"指示 -->
@@ -87,9 +93,15 @@
                 <div class="absolute top-0 left-0 right-0" :style="{ transform: `translateY(${visibleStartIndex * 24}px)` }">
                     <template x-for="item in visibleItems" :key="item.SourceIP">
                         <div class="flex items-center rounded hover:bg-base-200/40" style="height: 24px;">
-                            <div class="w-[200px] overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium"
-                                 x-text="item.SourceIP || 'Unknown'"
-                                 :title="item.SourceIP || 'Unknown'"></div>
+                            <div class="overflow-hidden text-ellipsis whitespace-nowrap flex-shrink-0 font-medium"
+                                 :title="clientTitle(item.SourceIP || 'Unknown')"
+                                 style="width: var(--label-w)">
+                                <span class="font-mono" x-text="item.SourceIP || 'Unknown'"></span>
+                                <template x-if="clientLabel(item.SourceIP || 'Unknown')">
+                                    <span class="ml-1 font-sans text-xs opacity-60"
+                                          x-text="'(' + clientLabel(item.SourceIP || 'Unknown') + ')'"></span>
+                                </template>
+                            </div>
                             <!-- 悬停只负责取值，不盖住色块 -->
                             <div class="flex-1 min-w-[600px] h-4 bg-base-300 rounded-full overflow-hidden cursor-crosshair"
                                  :style="{ backgroundImage: item.background }"
@@ -125,7 +137,8 @@
     <div x-show="hover.visible" x-cloak
          class="pointer-events-none fixed z-50 rounded-lg border border-base-300 bg-base-100 px-3 py-2 shadow-lg"
          :style="{ left: hover.x + 'px', top: hover.y + 'px' }">
-        <div class="font-mono text-xs opacity-70" x-text="hover.ip"></div>
+        <div class="font-mono text-xs opacity-70"
+             x-text="hover.name ? (hover.ip + ' (' + hover.name + ')') : hover.ip"></div>
         <div class="mt-1 flex items-baseline gap-2 whitespace-nowrap">
             <span class="font-mono text-xs" x-text="hover.time"></span>
             <span class="text-xs opacity-70">并发连接数</span>
@@ -152,7 +165,45 @@
             error: null,
             isToday: false,
             nowPercent: 0,
-            hover: { visible: false, x: 0, y: 0, ip: '', time: '', value: '0', summary: '' },
+            hover: { visible: false, x: 0, y: 0, ip: '', name: '', time: '', value: '0', summary: '' },
+            labelWidth: 200,
+
+            // 名称异步到达（或管理页保存后 reload()）时重算列宽
+            init() {
+                window.addEventListener('client-names-updated', () => {
+                    this.$nextTick(() => this.measureLabelWidth());
+                });
+            },
+
+            // 所有行一次性放进探针、只读一次宽度，避免逐行测量反复触发 reflow；
+            // clamp 到 [200, 320] 后写进父级 CSS 变量，所有行与时间轴共用以保证等宽
+            measureLabelWidth() {
+                const probe = this.$refs.labelProbe;
+                if (!probe) return;
+                const frag = document.createDocumentFragment();
+                for (const item of this.viewRows) {
+                    const ip = item.SourceIP || 'Unknown';
+                    const name = clientLabel(ip);
+                    const line = document.createElement('div');
+                    line.style.width = 'max-content';
+                    line.style.whiteSpace = 'nowrap';
+                    const ipSpan = document.createElement('span');
+                    ipSpan.className = 'font-mono';
+                    ipSpan.textContent = ip;
+                    line.appendChild(ipSpan);
+                    if (name) {
+                        line.appendChild(document.createTextNode(' '));
+                        const nameSpan = document.createElement('span');
+                        nameSpan.className = 'ml-1 font-sans text-xs opacity-60';
+                        nameSpan.textContent = '(' + name + ')';
+                        line.appendChild(nameSpan);
+                    }
+                    frag.appendChild(line);
+                }
+                probe.replaceChildren(frag);
+                const w = probe.getBoundingClientRect().width;
+                this.labelWidth = Math.max(200, Math.min(320, Math.ceil(w) + 8));
+            },
 
             // 时间网格：整点淡线 + 6 小时重线。作为色条的背景层，画在色块下面
             gridImage: [
@@ -318,6 +369,7 @@
                     x: Math.min(event.clientX + 14, window.innerWidth - 200),
                     y: event.clientY + 14,
                     ip: item.SourceIP || 'Unknown',
+                    name: clientLabel(item.SourceIP || 'Unknown'),
                     time: this.formatSlotTime(slot),
                     value: value === 255 ? '255+' : String(value),
                     summary: item.activeTimeText
@@ -356,7 +408,10 @@
                 if (this.$refs.viewport) {
                     this.$refs.viewport.scrollTop = 0;
                 }
-                this.$nextTick(() => this.syncViewportHeight());
+                this.$nextTick(() => {
+                    this.measureLabelWidth();
+                    this.syncViewportHeight();
+                });
             },
 
             compareIP(a, b) {

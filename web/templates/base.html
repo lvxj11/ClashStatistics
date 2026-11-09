@@ -108,6 +108,10 @@
                        class="tab {{if eq .CurrentPage "online-time"}}tab-active{{end}}">
                         在线状态
                     </a>
+                    <a href="/client-names" title="为客户端 IP 指定名称与备注，查看自动识别结果"
+                       class="tab {{if eq .CurrentPage "client-names"}}tab-active{{end}}">
+                        客户端名称
+                    </a>
                 </div>
                 
                 <main class="flex-1 p-4 md:p-6 page-transition">
@@ -353,6 +357,55 @@
                     return columns;
                 }
             };
+        }
+    </script>
+
+    <!-- 客户端名称：全局共享的 Alpine store。
+         各页面只读取展示名（IP 始终是主键），管理页保存后调用 reload() 刷新。
+         names 以 IP 为键：{name, source, note, auto_name, auto_source, ...}。
+         label/title/clientLabel 等都在 Alpine 表达式里调用，读取 store 的响应式属性，
+         数据到达或更新后相关 DOM 会自动重渲染。 -->
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.store('clientNames', {
+                names: {},
+                knownIPs: [],
+                loaded: false,
+
+                // 生效展示名（手动优先由后端算好，这里直接取 name）
+                label(ip) {
+                    const rec = Alpine.store('clientNames').names[ip || ''];
+                    return rec && rec.name ? rec.name : '';
+                },
+                // title 悬浮：完整名称 + 备注；没有名称时退回 IP
+                title(ip) {
+                    const rec = Alpine.store('clientNames').names[ip || ''];
+                    if (!rec || !rec.name) return ip || 'Unknown';
+                    return rec.note ? (rec.name + ' — ' + rec.note) : rec.name;
+                },
+                reload() {
+                    const self = Alpine.store('clientNames');
+                    return fetch('/api/client-names')
+                        .then(response => response.json())
+                        .then(data => {
+                            self.names = data.names || {};
+                            self.knownIPs = data.knownIPs || [];
+                            self.loaded = true;
+                            // 名称可能晚于页面数据到达，通知需要按名称算布局的页面重算
+                            window.dispatchEvent(new Event('client-names-updated'));
+                        })
+                        .catch(() => { self.loaded = true; });
+                }
+            });
+            Alpine.store('clientNames').reload();
+        });
+
+        // 模板里用的全局 helper（在 Alpine 表达式求值期间调用，响应式依赖照常建立）
+        function clientLabel(ip) { return Alpine.store('clientNames').label(ip); }
+        function clientTitle(ip) { return Alpine.store('clientNames').title(ip); }
+        function displayClient(ip) {
+            const name = clientLabel(ip);
+            return name ? (ip + ' (' + name + ')') : (ip || 'Unknown');
         }
     </script>
 </body>

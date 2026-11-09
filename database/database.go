@@ -354,6 +354,18 @@ func InitDB() (*Database, error) {
 	-- 时间窗过滤用的是 last_seen_timestamp，这个索引原本在迁移里建，
 	-- 迁移代码删除后必须在这里建，否则新库缺索引
 	CREATE INDEX IF NOT EXISTS idx_connections_last_seen_timestamp ON connections(last_seen_timestamp);
+
+	-- 客户端名称映射：与 connections 分开存，连接数据被定期清理时名称不会丢。
+	-- 手动与自动分列，写自动名称永远碰不到手动列（手动配置为第一优先）。
+	CREATE TABLE IF NOT EXISTS client_names (
+			ip              TEXT PRIMARY KEY,
+			manual_name     TEXT NOT NULL DEFAULT '',
+			note            TEXT NOT NULL DEFAULT '',
+			auto_name       TEXT NOT NULL DEFAULT '',
+			auto_source     TEXT NOT NULL DEFAULT '',
+			auto_updated    INTEGER NOT NULL DEFAULT 0,
+			manual_updated  INTEGER NOT NULL DEFAULT 0
+		);
 	`
 
 	_, err = db.Exec(sqlStmt)

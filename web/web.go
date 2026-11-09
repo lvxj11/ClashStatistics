@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clash-statistics/database"
+	"clash-statistics/discovery"
 	"clash-statistics/utils"
 )
 
@@ -25,15 +26,17 @@ var staticFiles embed.FS
 
 // Server 结构体
 type Server struct {
-	config *utils.Config
-	db     *database.Database
+	config   *utils.Config
+	db       *database.Database
+	resolver *discovery.Resolver // 客户端名称自动发现（可选，失败会安静降级）
 }
 
 // NewServer 创建一个新的服务器实例
 func NewServer(config *utils.Config, db *database.Database) *Server {
 	return &Server{
-		config: config,
-		db:     db,
+		config:   config,
+		db:       db,
+		resolver: discovery.NewResolver(db),
 	}
 }
 
@@ -91,11 +94,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/host-stats", s.showHostStats)
 	mux.HandleFunc("/sourceip-stats", s.showSourceIPStats)
 	mux.HandleFunc("/online-time", s.showOnlineTime)
+	mux.HandleFunc("/client-names", s.showClientNames)
 	mux.HandleFunc("/api/stats", s.getStats)
 	mux.HandleFunc("/api/sourceip-stats", s.getSourceIPStats)
 	mux.HandleFunc("/api/target-detail", s.getTargetDetail)
 	mux.HandleFunc("/api/sourceip-detail", s.getSourceIPDetail)
 	mux.HandleFunc("/api/gantt", s.getGanttData)
+	mux.HandleFunc("/api/client-names", s.handleClientNames)
 	mux.HandleFunc("/refresh", s.refreshData)
 	mux.HandleFunc("/favicon.svg", s.serveFavicon)
 	// 静态资源（CSS / JS / 图标），全部编译进二进制，随程序分发
@@ -163,6 +168,9 @@ func (s *Server) Start(port string) {
 	// 在单独的 goroutine 中定期执行数据库维护任务
 	go s.startDatabaseMaintenance()
 
+	// 客户端名称自动发现：被动监听，内部自起 goroutine，失败只降级、不阻塞启动
+	s.resolver.Start()
+
 	err := http.ListenAndServe(":"+port, s.Handler())
 	if err != nil {
 		// 启动失败时，确保错误信息也输出到控制台
@@ -191,6 +199,9 @@ func (s *Server) periodicallyRefreshData() {
 		for i, conn := range connectionInfo.Connections {
 			dbConnections[i] = database.FromClashConnection(conn)
 		}
+
+		// 顺带把元数据补充进名称候选缓存（不依赖入库是否成功）
+		s.resolver.ObserveConnections(dbConnections)
 
 		// 保存当前连接到数据库（每次保存时都会更新closed_time为当前时间）
 		err = s.db.SaveConnections(dbConnections)
@@ -409,6 +420,8 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 	for i, conn := range connectionInfo.Connections {
 		dbConnections[i] = database.FromClashConnection(conn)
 	}
+
+	s.resolver.ObserveConnections(dbConnections)
 
 	// 保存到数据库
 	err = s.db.SaveConnections(dbConnections)

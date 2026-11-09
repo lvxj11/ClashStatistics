@@ -16,11 +16,11 @@
         <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3">
             <div class="flex flex-col gap-1">
                 <span class="text-xs font-medium opacity-70">起始时间</span>
-                <input type="datetime-local" x-model="startTime" @change="loadSourceIPStats()" class="input input-sm w-auto" step="60">
+                <input type="datetime-local" x-model="startTime" @change="loadStats()" class="input input-sm w-auto" step="60">
             </div>
             <div class="flex flex-col gap-1">
                 <span class="text-xs font-medium opacity-70">结束时间</span>
-                <input type="datetime-local" x-model="endTime" @change="loadSourceIPStats()" class="input input-sm w-auto" step="60">
+                <input type="datetime-local" x-model="endTime" @change="loadStats()" class="input input-sm w-auto" step="60">
             </div>
             <div class="flex flex-col gap-1">
                 <span class="text-xs font-medium opacity-70">搜索客户端</span>
@@ -41,7 +41,13 @@
                         <template x-for="(item, index) in tbl.rows" :key="item.Target || index">
                             <tr class="row-hover cursor-pointer" @click="tbl.onRowClick(item)">
                                 <td class="w-16 text-center" :class="index < 3 ? 'font-bold text-primary' : 'opacity-60'" x-text="index + 1"></td>
-                                <td class="break-all font-medium font-mono text-xs" x-text="item.Target"></td>
+                                <td class="break-all font-medium text-xs" :title="clientTitle(item.Target)">
+                                    <span class="font-mono" x-text="item.Target"></span>
+                                    <template x-if="clientLabel(item.Target)">
+                                        <span class="ml-1.5 font-sans opacity-60"
+                                              x-text="'(' + clientLabel(item.Target) + ')'"></span>
+                                    </template>
+                                </td>
                                 <td class="text-right tabular-nums" x-text="item.Connections"></td>
                                 <td class="text-right tabular-nums" x-text="item.Peers"></td>
                                 <td class="text-right tabular-nums" x-text="item.Chains"></td>
