@@ -349,10 +349,7 @@ func (r *Resolver) startDHCP() {
 		Control: func(network, address string, c syscall.RawConn) error {
 			var sockErr error
 			if err := c.Control(func(fd uintptr) {
-				sockErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-				if sockErr == nil {
-					sockErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
-				}
+				sockErr = setDHCPSockOpts(fd)
 			}); err != nil {
 				return err
 			}
