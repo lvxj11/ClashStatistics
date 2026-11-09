@@ -28,7 +28,6 @@ const (
 	srcDHCP        = "dhcp_option12"
 	srcInboundUser = "inbound_user"
 	srcMDNS        = "mdns"
-	srcInboundName = "inbound_name"
 	srcProcess     = "process"
 )
 
@@ -36,7 +35,6 @@ var sourcePriority = map[string]int{
 	srcDHCP:        40,
 	srcInboundUser: 35,
 	srcMDNS:        30,
-	srcInboundName: 10,
 	srcProcess:     5,
 }
 
@@ -158,12 +156,14 @@ func (r *Resolver) flush() {
 }
 
 // ObserveConnections 利用每次轮询拿到的连接快照，补充基于元数据的候选。
-// inbound_user 通常是刻意设置的标识；inbound_name / process 往往是所有客户端共享的
-// 代理侧值，只有当某个值只对应单个 IP 时才当作识别名（否则没有区分度，直接丢弃）。
+// inbound_user 是入站认证用户名，通常是刻意设置的标识；process 只有当某个值只
+// 对应单个 IP 时才当作识别名（否则没有区分度，直接丢弃）。
+// inbound_name 不作为来源：它是代理侧入站名（如 DEFAULT-TUN），所有客户端共用，
+// 无法标识设备；"值只出现在一个 IP"基于单次快照，只有一个设备在线时共享常量
+// 也会看似唯一，曾误把 DEFAULT-TUN 当成客户端名称。
 func (r *Resolver) ObserveConnections(conns []database.Connection) {
 	type meta struct {
 		users map[string]bool
-		names map[string]bool
 		procs map[string]bool
 	}
 	byIP := map[string]*meta{}
@@ -184,20 +184,15 @@ func (r *Resolver) ObserveConnections(conns []database.Connection) {
 			continue
 		}
 		u := cleanLabel(c.InboundUser)
-		n := cleanLabel(c.InboundName)
 		p := cleanLabel(basename(c.Process))
 		m := byIP[ip]
 		if m == nil {
-			m = &meta{map[string]bool{}, map[string]bool{}, map[string]bool{}}
+			m = &meta{map[string]bool{}, map[string]bool{}}
 			byIP[ip] = m
 		}
 		if u != "" {
 			m.users[u] = true
 			note(u, ip)
-		}
-		if n != "" {
-			m.names[n] = true
-			note(n, ip)
 		}
 		if p != "" {
 			m.procs[p] = true
@@ -209,11 +204,6 @@ func (r *Resolver) ObserveConnections(conns []database.Connection) {
 		for u := range m.users {
 			if !looksRandom(u) {
 				r.offer(ip, u, srcInboundUser)
-			}
-		}
-		for n := range m.names {
-			if len(valueIPs[n]) == 1 && !looksRandom(n) {
-				r.offer(ip, n, srcInboundName)
 			}
 		}
 		for p := range m.procs {

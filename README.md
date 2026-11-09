@@ -120,13 +120,13 @@ db_vacuum_interval = 24
 
 - **手动配置第一优先**：`manual_name` 非空时，展示一律忽略自动值（自动值仍保留，清除手动后可回退）
 - 自动识别只是兜底辅助，**不保证一定能获取到**，也不预设一定能拿到
-- 自动来源优先级：`DHCP option 12 > mDNS > 连接元数据（inbound_user 等）`，手动始终高于全部自动来源
+- 自动来源优先级：`DHCP option 12 > mDNS > 入站用户(inbound_user) > 进程(process)`，手动始终高于全部自动来源
 
 自动识别来自被动监听（不需要、也不会去适配路由器租约 API）：
 
 - 监听 `DHCP Request` 广播里的 option 12（主机名）与 option 50（Requested-IP），直接得到 IP→主机名
 - 加入 `224.0.0.251:5353` mDNS 组播，解析 `.local` 主机名与设备友好名；启动与周期发送 DNS-SD 触发查询
-- 顺带从连接元数据（`inbound_user` / `inbound_name` / `process`）补充候选
+- 顺带从连接元数据（`inbound_user` / `process`）补充候选。`inbound_name` 是代理侧入站名（所有客户端共用的 `DEFAULT-TUN` 之类），无法标识设备，不作为来源
 - 候选经清洗（过滤 UUID、长数字临时名、服务实例名）后，按优先级写入 `auto_name`
 - 任一步失败（端口被占、无组播、无权限、无网卡）只记一条警告并安静降级，不影响手动配置和现有页面
 
@@ -191,7 +191,7 @@ db_vacuum_interval = 24
 
 ## 版本信息
 
-当前版本：v1.0.3
+当前版本：v1.0.4
 
 ## 技术栈
 

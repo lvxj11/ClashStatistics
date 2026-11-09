@@ -373,6 +373,15 @@ func InitDB() (*Database, error) {
 		return nil, fmt.Errorf("创建表失败: %v", err)
 	}
 
+	// inbound_name 已不再作为自动来源：它是代理侧入站名（如 DEFAULT-TUN），所有
+	// 客户端共用，无法标识设备。清理升级前遗留的这类自动名称，避免继续显示无效值；
+	// WHERE 条件幂等，每次启动执行无副作用。
+	if _, err = db.Exec(`UPDATE client_names
+		SET auto_name = '', auto_source = '', auto_updated = 0
+		WHERE auto_source = 'inbound_name'`); err != nil {
+		return nil, fmt.Errorf("清理历史自动名称失败: %v", err)
+	}
+
 	return &Database{db: db}, nil
 }
 
