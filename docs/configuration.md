@@ -13,7 +13,7 @@ interval = 1000
 [server]
 log_level = "warn"
 web_port = "8080"
-db_cleanup_days = 7
+db_cleanup_days = 30
 db_vacuum_interval = 24
 ```
 
@@ -39,7 +39,7 @@ db_vacuum_interval = 24
 |--------|----------|--------|------|
 | `web_port` | `WEB_PORT` | `8080` | Web 服务监听端口 |
 | `log_level` | `LOG_LEVEL` | `warn` | 日志级别：`debug` / `info` / `warn` / `error`，写入 `data/clash_statistics.log` |
-| `db_cleanup_days` | `DB_CLEANUP_DAYS` | `7` | 连接数据的保留天数。启动时清理一次，之后每 24 小时清理一次 |
+| `db_cleanup_days` | `DB_CLEANUP_DAYS` | `30` | 连接数据的保留天数。启动时清理一次，之后每 24 小时清理一次 |
 | `db_vacuum_interval` | `DB_VACUUM_INTERVAL` | `24` | SQLite `VACUUM` 的执行间隔（小时），用于回收删除数据后的空闲空间。**启动时不执行**，避免拖慢启动 |
 
 ## 使用方法

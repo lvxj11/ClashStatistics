@@ -55,7 +55,7 @@ func LoadConfig() (*Config, error) {
 		ClashInterval:    1000,
 		LogLevel:         "warn", // 默认日志级别为警告
 		WebPort:          "8080", // 默认Web端口为8080
-		DBCleanupDays:    7,      // 默认保留7天数据
+		DBCleanupDays:    30,     // 默认保留30天数据
 		DBVacuumInterval: 24,     // 默认每24小时执行一次VACUUM
 	}
 
@@ -207,7 +207,7 @@ log_level = "warn"
 # Web 服务器端口号
 web_port = "8080"
 # 数据库数据保留天数
-db_cleanup_days = 7
+db_cleanup_days = 30
 # 数据库 VACUUM 执行间隔（小时）
 db_vacuum_interval = 24
 `

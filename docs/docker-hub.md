@@ -39,7 +39,7 @@ docker run -d \
 | `CLASH_INTERVAL` | `1000` | 轮询间隔（毫秒）。同时作为 `/connections?interval=` 传给 API，越小越容易抓到短连接，请求也更频繁 |
 | `WEB_PORT` | `8080` | Web 服务监听端口（容器内） |
 | `LOG_LEVEL` | `warn` | `debug` / `info` / `warn` / `error` |
-| `DB_CLEANUP_DAYS` | `7` | 连接数据保留天数，启动时清理一次，之后每 24 小时清理一次 |
+| `DB_CLEANUP_DAYS` | `30` | 连接数据保留天数，启动时清理一次，之后每 24 小时清理一次 |
 | `DB_VACUUM_INTERVAL` | `24` | SQLite `VACUUM` 间隔（小时），启动时不执行 |
 | `TZ` | `Asia/Shanghai` | 容器时区 |
 
@@ -54,7 +54,7 @@ interval = 1000
 [server]
 log_level = "warn"
 web_port = "8080"
-db_cleanup_days = 7
+db_cleanup_days = 30
 db_vacuum_interval = 24
 ```
 
