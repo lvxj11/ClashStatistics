@@ -13,9 +13,10 @@ import (
 	"clash-statistics/utils"
 )
 
-// ipfixCollector 接收路由器 UDP 推送的 NetFlow v9 / IPFIX 流记录，只写 activity 表。
-// 落地实测结论（2026-11-10）：8 字段模板、只算上行（srcAddr 落 LAN）、撤 NAT/MAC、
-// 忽略 IPv6 模板、排除网关自身 IP、落库即聚合不存原始流。
+// ipfixCollector 接收路由器 UDP 推送的 NetFlow v9 / IPFIX 流记录，按五元组去重写入
+// flow_slots 表，产出真实并发连接数。落地实测结论（2026-11-10）：8 字段模板、只算
+// 上行（srcAddr 落 LAN）、撤 NAT/MAC、忽略 IPv6 模板、排除网关自身 IP；长流被
+// active-flow-timeout 切片不影响计数（按 五元组 + 5 分钟槽 去重）。
 type ipfixCollector struct {
 	db       *database.Database
 	src      database.DataSource
@@ -136,6 +137,9 @@ func (c *ipfixCollector) handlePacket(data []byte, peer net.IP) {
 	}
 
 	peerStr := peer.String()
+	// 一个报文的所有上行流收集成一批，SaveFlows 内部按 (五元组, 槽) 去重，
+	// 只开一个事务；不做 TTL / 内存连接表，避免重启边界与五元组复用的歧义。
+	records := make([]database.FlowRecord, 0, len(flows))
 	for _, f := range flows {
 		if f.IsV6 || f.SrcIP == nil {
 			continue // IPv6 模板一期忽略
@@ -153,9 +157,21 @@ func (c *ipfixCollector) handlePacket(data []byte, peer net.IP) {
 		if end < start {
 			continue
 		}
-		if err := c.db.SaveActivity(c.src.ID, ip, start, end); err != nil {
-			log.Error("保存活跃度失败: %v\n", err)
-		}
+		records = append(records, database.FlowRecord{
+			SrcIP:    ip,
+			SrcPort:  f.SrcPort,
+			DstIP:    f.DstIP.String(),
+			DstPort:  f.DstPort,
+			Protocol: f.Protocol,
+			Start:    start,
+			End:      end,
+		})
+	}
+	if len(records) == 0 {
+		return
+	}
+	if err := c.db.SaveFlows(c.src.ID, records); err != nil {
+		log.Error("保存流记录失败: %v\n", err)
 	}
 }
 

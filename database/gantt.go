@@ -103,5 +103,5 @@ func (d *Database) GetGanttData(source, date string) ([]GanttRow, error) {
 	if source == "" || source == "clash" {
 		return d.getClashGanttData(date, normalize)
 	}
-	return d.getActivityGanttData(source, date, normalize)
+	return d.getFlowSlotGanttData(source, date, normalize)
 }

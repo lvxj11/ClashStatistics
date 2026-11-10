@@ -186,7 +186,7 @@ func buildTimeWindow(startTimestamp, endTimestamp int64) (string, []interface{})
 // 288 个时间槽里大部分是 0（终端通常断续在线），只传非零槽能显著减小体积，
 // 配合 gzip 效果更明显。SlotIndexes / SlotValues / RawValues 一一对应：
 // SlotValues 是 1-6 的活跃强度档位（供前端取色，跨源可比），
-// RawValues 是该槽的原始活跃量（并发连接数 / 上行流数，供悬停展示绝对数值）。
+// RawValues 是该槽的真实并发连接数（Clash 代理 / 推送源去重后的连接，供悬停展示绝对数值）。
 type GanttRow struct {
 	SourceIP    string `json:"SourceIP"`
 	SlotIndexes []int  `json:"SlotIndexes"`
@@ -365,8 +365,9 @@ func InitDB() (*Database, error) {
 			manual_updated  INTEGER NOT NULL DEFAULT 0
 		);
 
-	-- 活跃度聚合表：推送式数据源（IPFIX / NetFlow v9）只写这里，绝不混入 connections。
-	-- 落库即聚合，按 5 分钟槽累加，不存原始流；slot_ts 是槽起始 Unix 秒。
+	-- 活跃度聚合表（v2.0.0 遗留）：B 方案之前推送源按「上行流数」累加写这里。
+	-- 现已停写停查，保留 DDL 只为让升级前残留数据按保留天数清理（CleanupActivity）；
+	-- 旧数据没有五元组、口径也不同，无法迁移到 flow_slots。
 	CREATE TABLE IF NOT EXISTS activity (
 			source    TEXT NOT NULL,
 			ip        TEXT NOT NULL,
@@ -375,6 +376,21 @@ func InitDB() (*Database, error) {
 			PRIMARY KEY (source, ip, slot_ts)
 		);
 	CREATE INDEX IF NOT EXISTS idx_activity_source_slot ON activity(source, slot_ts);
+
+	-- 推送源的并发连接去重表：一行 = 一个 (source, 五元组, 5 分钟槽)。
+	-- 主键天然去重，长流被 active-flow-timeout 切片、分片重复上报都只算一条连接。
+	-- 查询时按 (src_ip, 槽) COUNT(*) 即真实并发连接数；不存原始流的逐包明细。
+	CREATE TABLE IF NOT EXISTS flow_slots (
+			source    TEXT NOT NULL,
+			src_ip    TEXT NOT NULL,
+			src_port  INTEGER NOT NULL,
+			dst_ip    TEXT NOT NULL,
+			dst_port  INTEGER NOT NULL,
+			proto     INTEGER NOT NULL,
+			slot_ts   INTEGER NOT NULL,
+			PRIMARY KEY (source, src_ip, src_port, dst_ip, dst_port, proto, slot_ts)
+		);
+	CREATE INDEX IF NOT EXISTS idx_flow_slots_source_slot ON flow_slots(source, slot_ts);
 
 	-- 数据源定义：运行时可增删、频率各异；系统级配置仍留在 config.toml / env。
 	-- credential_ref 只保存凭据引用（环境变量名），不存明文。
@@ -401,8 +417,9 @@ func InitDB() (*Database, error) {
 		return nil, fmt.Errorf("创建表失败: %v", err)
 	}
 
-	// v2.0.0 的数据库迁移基线是 v1.0.4：升级新增 activity / data_sources 两张表
-	// （上面的 CREATE TABLE IF NOT EXISTS），connections 与 client_names 结构不变。
+	// v2.0.0 的数据库迁移基线是 v1.0.4：升级新增 activity / flow_slots / data_sources
+	// 三张表（上面的 CREATE TABLE IF NOT EXISTS），connections 与 client_names 结构不变。
+	// activity 为旧聚合表，已停写停查，仅按保留天数清理残留。
 	// v1.0.3 及更早版本的历史兼容代码已移除。
 	// 自定义热度阈值是后加的列：CREATE TABLE IF NOT EXISTS 不会改旧表结构，
 	// 所以这里用幂等 ALTER 补齐，并把升级前硬编码的 IPFIX 阈值迁到内置 ipfix 行。
@@ -1006,8 +1023,11 @@ func (d *Database) CleanupOldData(days int) error {
 		return err
 	}
 
-	// activity 与 connections 共用同一个 30 天 cutoff，否则推送源的表会无限增长
+	// flow_slots / activity 与 connections 共用同一个 30 天 cutoff，否则推送源的表会无限增长
 	if err := d.CleanupActivity(cutoffTimestamp); err != nil {
+		return err
+	}
+	if err := d.CleanupFlowSlots(cutoffTimestamp); err != nil {
 		return err
 	}
 

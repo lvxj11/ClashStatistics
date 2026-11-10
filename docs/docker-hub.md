@@ -121,14 +121,14 @@ docker stop clash-statistics && docker rm clash-statistics
 # 用与原来相同的 -v 挂载和环境变量重新 docker run
 ```
 
-数据库会自动建表 / 迁移，升级不需要手动处理数据；只要 `/app/data` 挂载不变，历史统计就都在。也可以固定版本标签，例如 `lvxj11/clash-statistics:2.0.0`。
+数据库会自动建表 / 迁移，升级不需要手动处理数据；只要 `/app/data` 挂载不变，历史统计就都在。也可以固定版本标签，例如 `lvxj11/clash-statistics:2.1.0`。
 
-> **v2.0.0 迁移基线为 v1.0.4**：升级只新增 `activity`、`data_sources` 两张表，`connections` / `client_names` 结构不变、无数据迁移；v1.0.3 及更早版本的历史迁移代码已移除，请先用 v1.0.4 过渡再升级到 v2.0.0。
+> **迁移基线为 v1.0.4**：升级新增 `activity`、`flow_slots`、`data_sources` 三张表，`connections` / `client_names` 结构不变、无数据迁移（`activity` 为已停写停查的旧聚合表，仅按保留天数清理残留；在线状态推送源改用 `flow_slots` 后从升级时刻重新积累热度）。v1.0.3 及更早版本的历史迁移代码已移除，请先用 v1.0.4 过渡再升级。
 
 ## 标签
 
 - `latest` —— 最新发布版本
-- `2.0.0`、`1.0.4`、`1.0.3` … —— 与 GitHub Release 对应的语义化版本
+- `2.1.0`、`2.0.0`、`1.0.4`、`1.0.3` … —— 与 GitHub Release 对应的语义化版本
 
 ## 更多文档
 

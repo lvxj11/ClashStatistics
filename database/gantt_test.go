@@ -128,19 +128,29 @@ func TestClashGanttUnchanged(t *testing.T) {
 	}
 }
 
-// TestActivityRoundTrip 校验推送源落库即聚合：一条跨 3 槽的流累加两次后，
-// 查询能还原成正确的稀疏行，且档位落在 1-6。
-func TestActivityRoundTrip(t *testing.T) {
+// TestFlowSlotsDedup 校验 B 方案的核心语义：相同五元组的多个流分片（同一长连接被
+// active-flow-timeout 切片或重复上报）在同一 5 分钟槽只算 1 条并发连接；不同五元组
+// 才算多条。查询出的 RawValues 即真实并发连接数，与切片长度无关。
+func TestFlowSlotsDedup(t *testing.T) {
 	db, date := withTempDB(t)
 	loc := time.Now().Location()
 	dayStart, _ := time.ParseInLocation("2006-01-02", date, loc)
 	start := dayStart.Add(10 * time.Hour).Unix()
-	end := start + 12*60
+	end := start + 12*60 // 跨 3 个槽
 
-	for i := 0; i < 2; i++ {
-		if err := db.SaveActivity("ipfix", "192.168.1.5", start, end); err != nil {
-			t.Fatal(err)
+	rec := func(srcPort uint16) FlowRecord {
+		return FlowRecord{
+			SrcIP: "192.168.1.5", SrcPort: srcPort, DstIP: "8.8.8.8",
+			DstPort: 443, Protocol: 6, Start: start, End: end,
 		}
+	}
+
+	// 同一连接被切成 3 个分片（五元组完全相同，且都覆盖 3 个槽）：
+	// 每个 (五元组, 槽) 去重后只留 1 行。
+	if err := db.SaveFlows("ipfix", []FlowRecord{
+		rec(12345), rec(12345), rec(12345),
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	rows, err := db.GetGanttData("ipfix", date)
@@ -158,13 +168,23 @@ func TestActivityRoundTrip(t *testing.T) {
 			t.Fatalf("档位越界: %d", v)
 		}
 	}
-	// 累加两次 → 每槽原始流数 2，同时验证 RawValues 带出的是绝对数值而非档位
-	if len(rows[0].RawValues) != 3 {
-		t.Fatalf("RawValues 应与槽一一对应, got %d", len(rows[0].RawValues))
+	for _, v := range rows[0].RawValues {
+		if v != 1 {
+			t.Fatalf("3 个同五元组分片去重后每槽并发连接应为 1, got %d", v)
+		}
+	}
+
+	// 再上报一条不同源端口的连接：每槽并发连接数应变成 2。
+	if err := db.SaveFlows("ipfix", []FlowRecord{rec(12346)}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = db.GetGanttData("ipfix", date)
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, v := range rows[0].RawValues {
 		if v != 2 {
-			t.Fatalf("原始流数应为 2, got %d", v)
+			t.Fatalf("两个不同五元组每槽并发连接应为 2, got %d", v)
 		}
 	}
 
@@ -174,7 +194,7 @@ func TestActivityRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(clashRows) != 0 {
-		t.Fatalf("Clash 源不应混入 activity 数据: %#v", clashRows)
+		t.Fatalf("Clash 源不应混入 flow_slots 数据: %#v", clashRows)
 	}
 }
 
@@ -186,11 +206,16 @@ func TestCustomThresholdsPerSource(t *testing.T) {
 	dayStart, _ := time.ParseInLocation("2006-01-02", date, loc)
 	start := dayStart.Add(10 * time.Hour).Unix()
 
-	// 同一槽累加 21 条流 → 原始值 21
-	for i := 0; i < 21; i++ {
-		if err := db.SaveActivity("ipfix", "192.168.1.5", start, start); err != nil {
-			t.Fatal(err)
+	// 同一槽上报 21 条不同五元组的连接 → 去重后原始并发连接数 21
+	flows := make([]FlowRecord, 21)
+	for i := range flows {
+		flows[i] = FlowRecord{
+			SrcIP: "192.168.1.5", SrcPort: uint16(10000 + i), DstIP: "8.8.8.8",
+			DstPort: 443, Protocol: 6, Start: start, End: start,
 		}
+	}
+	if err := db.SaveFlows("ipfix", flows); err != nil {
+		t.Fatal(err)
 	}
 
 	// 未开启自定义：默认阈值 {2,20,50,150,254} 下 21 → 3 档

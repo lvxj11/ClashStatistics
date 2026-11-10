@@ -83,6 +83,9 @@ func TestDecodeIPv4(t *testing.T) {
 	if f.IsV6 {
 		t.Fatalf("IPv4 记录不应标记 IsV6")
 	}
+	if f.SrcPort != 12345 || f.DstPort != 443 || f.Protocol != 6 {
+		t.Fatalf("五元组端口/协议解析错误: %#v", f)
+	}
 }
 
 // TestTemplatePersists 校验模板跨报文缓存：先收到模板、再收到纯数据报文也能解码。

@@ -42,7 +42,7 @@ cd dist && ./clash-statistics
 
 ## 版本信息
 
-当前版本：v2.0.0
+当前版本：v2.1.0
 
 ## 技术栈
 

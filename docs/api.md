@@ -33,4 +33,4 @@
 
 统计 / 明细类接口返回 `{Rows, Total, Truncated}`：`Total` 是符合条件的真实条数，`Truncated` 表示被单表上限（500 行，定义在 `database.maxTableRows`）截断。排序发生在 `LIMIT` 之前，所以截断的是"排好序的前 500 行"。
 
-`/api/gantt` 返回 `[]GanttRow`，每行 `{SourceIP, SlotIndexes, SlotValues, RawValues}`：只传非零时间槽，三个数组一一对应（下标即 5 分钟槽序号）。**`SlotValues` 是 1–6 的活跃强度档位**，不是绝对连接数 —— 各数据源按自己的阈值（默认 `2,20,50,150,254`，可在管理页按源自定义）归一化，颜色只表示相对本源有多忙，便于跨源对比；`RawValues` 是该槽的原始活跃量（Clash 为并发连接数、推送源为上行流数），供前端悬停 / 峰值展示绝对数值。详见 [多数据源在线状态](data-sources.md)。
+`/api/gantt` 返回 `[]GanttRow`，每行 `{SourceIP, SlotIndexes, SlotValues, RawValues}`：只传非零时间槽，三个数组一一对应（下标即 5 分钟槽序号）。**`SlotValues` 是 1–6 的活跃强度档位**，不是绝对连接数 —— 各数据源按自己的阈值（默认 `2,20,50,150,254`，可在管理页按源自定义）归一化，颜色只表示相对本源有多忙，便于跨源对比；`RawValues` 是该槽的真实并发连接数（Clash 为代理并发连接，推送源为按五元组去重的并发连接），供前端悬停 / 峰值展示绝对数值。详见 [多数据源在线状态](data-sources.md)。

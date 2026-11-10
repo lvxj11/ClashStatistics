@@ -17,7 +17,7 @@ Clash 生态里已经有很多很棒的面板（Yacd、MetaCubeXD、OpenClash �
 ## 它要解决的两个问题
 
 1. **流量归因** —— 查看是哪些**用户**（源 IP）或哪些**目标**（域名/IP）用掉了过多流量，并可下钻到"某个目标被谁访问、走的哪条线路、命中了哪条规则"。
-2. **使用时段监控** —— 按天呈现每个设备的在线时段与活跃强度（由存活连接或路由器上行流体现），用来观察**某个设备是否在不应使用的时间仍有连接**，比如孩子的手机。在线状态支持多数据源切换，详见 [多数据源在线状态](data-sources.md)。
+2. **使用时段监控** —— 按天呈现每个设备的在线时段与活跃强度（由存活代理连接或路由器去重后的并发连接体现），用来观察**某个设备是否在不应使用的时间仍有连接**，比如孩子的手机。在线状态支持多数据源切换，详见 [多数据源在线状态](data-sources.md)。
 
 ## 目录结构
 
@@ -25,7 +25,7 @@ Clash 生态里已经有很多很棒的面板（Yacd、MetaCubeXD、OpenClash �
 - `data/` - 运行时目录：SQLite 数据库、日志、配置文件（`config.toml`）。相对**当前工作目录**创建 —— 在 `dist/` 下运行则位于 `dist/data/`；Docker 部署时由挂载卷提供（见 `docker-compose.yml`）
 - `main.go` - 主程序文件
 - `web/` - Web 服务器、API、采集器（Clash 轮询 / IPFIX UDP 监听）与页面模板
-- `database/` - 数据库操作相关代码（连接统计 `connections`、活跃度 `activity`、数据源 `data_sources`、客户端名称）
+- `database/` - 数据库操作相关代码（连接统计 `connections`、推送源并发连接 `flow_slots`、数据源 `data_sources`、客户端名称）
 - `ipfix/` - NetFlow v9 / IPFIX 报文解码（纯协议解析，可单独测试）
 - `discovery/` - 客户端名称自动发现（DHCP option 12 / mDNS 被动监听与解析）
 - `utils/` - 工具函数
@@ -60,12 +60,12 @@ npm run build:css    # 输入 web/css/input.css，输出 web/static/app.css
 ## 注意事项
 
 - 首次运行时会自动创建数据库文件，并写入两条内置数据源（Clash 代理、路由器 IPFIX）
-- 定期清理过期数据，默认保留 30 天；`activity` 与 `connections` 共用同一清理边界
+- 定期清理过期数据，默认保留 30 天；`flow_slots`（推送源并发连接）与 `connections` 共用同一清理边界，v2.0.0 遗留的 `activity` 表也随同一边界清理残留数据
 - 支持手动刷新数据和 API 刷新功能
 - 所有统计数据都存储在 SQLite 数据库中，确保数据持久化
 
 ## 版本与迁移基线
 
-- v2.0.0 起支持多数据源在线状态（数据源入表 + 管理页、IPFIX 推送采集、活跃强度 1–6 档归一化）。
-- **数据库迁移基线为 v1.0.4**：升级只新增 `activity`、`data_sources` 两张表（`CREATE TABLE IF NOT EXISTS`），`connections` 与 `client_names` 结构不变，**无数据迁移**。
-- **v1.0.3 及更早版本的历史迁移 / 兼容代码已移除**（旧索引清理、`inbound_name` 名称清理等）。从这些版本升级请先用 v1.0.4 过渡，再升到 v2.0.0。详见 [多数据源在线状态](data-sources.md)。
+- v2.0.0 起支持多数据源在线状态（数据源入表 + 管理页、IPFIX 推送采集、活跃强度 1–6 档归一化）；**v2.1.0** 把 IPFIX 源改为按五元组去重的真实并发连接数（`flow_slots` 表），两源单位统一为「并发连接数」。
+- **数据库迁移基线为 v1.0.4**：升级新增 `activity`、`flow_slots`、`data_sources` 三张表（`CREATE TABLE IF NOT EXISTS`），`connections` 与 `client_names` 结构不变，**无数据迁移**。`activity` 为旧聚合表，已停写停查，仅按保留天数清理残留。
+- **v1.0.3 及更早版本的历史迁移 / 兼容代码已移除**（旧索引清理、`inbound_name` 名称清理等）。从这些版本升级请先用 v1.0.4 过渡，再升到 v2.1.0。详见 [多数据源在线状态](data-sources.md)。

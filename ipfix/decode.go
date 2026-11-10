@@ -16,6 +16,9 @@ const (
 	ieDstIPv4        = 12 // destinationIPv4Address
 	ieSrcIPv6        = 27 // sourceIPv6Address
 	ieDstIPv6        = 28 // destinationIPv6Address
+	ieSrcPort        = 7  // sourceTransportPort：五元组，参与并发连接去重
+	ieDstPort        = 11 // destinationTransportPort
+	ieProtocol       = 4  // protocolIdentifier
 )
 
 // Field 是模板里的一个 Information Element。
@@ -26,9 +29,13 @@ type Field struct {
 
 // Flow 是一条解码后的流记录，只保留热度条需要的字段。
 // FirstFwd / LastFwd 是相对设备启动的毫秒值，需结合 exportTime 反推绝对时间。
+// SrcIP/DstIP/SrcPort/DstPort/Protocol 组成五元组，用于按连接去重。
 type Flow struct {
 	SrcIP    net.IP
 	DstIP    net.IP
+	SrcPort  uint16
+	DstPort  uint16
+	Protocol uint8
 	FirstFwd uint32
 	LastFwd  uint32
 	IsV6     bool
@@ -170,6 +177,18 @@ func (d *Decoder) parseData(tid uint16, body []byte) []Flow {
 			case ieSrcIPv6, ieDstIPv6:
 				if field.Length == 16 {
 					isV6 = true
+				}
+			case ieSrcPort:
+				if field.Length == 2 {
+					f.SrcPort = binary.BigEndian.Uint16(raw)
+				}
+			case ieDstPort:
+				if field.Length == 2 {
+					f.DstPort = binary.BigEndian.Uint16(raw)
+				}
+			case ieProtocol:
+				if field.Length == 1 {
+					f.Protocol = raw[0]
 				}
 			case ieFirstForwarded:
 				if field.Length == 4 {
