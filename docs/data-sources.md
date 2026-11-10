@@ -20,15 +20,17 @@
 
 ## 数据源定义与管理页
 
-- 数据源定义存于 `data_sources` 表，在 `/data-sources` 页增删改、启停、设默认；`PUT` / `DELETE` 后即时重建采集器。
+- 数据源定义存于 `data_sources` 表，在 `/data-sources` 页增删改、启停、设默认；`PUT` / `DELETE` 后即时重建采集器。这是**运行时唯一**的数据源配置来源。
 - 每行还带 `thresholds` / `custom_thresholds`（自定义热度阈值，见上「活跃强度」）；改动只影响该源的在线状态颜色，立即生效、无需重启。
-- 系统级配置（Web 端口、日志、保留天数）仍在 `config.toml` / 环境变量，不进表。
-- **凭据只存引用**（环境变量名，如 `CLASH_SECRET`），不存明文；管理页与接口只回显「是否已配置」，不回显值。
-- 内置 `clash` 源不能删除，只能停用，避免升级后失去默认视图。
+- 系统级配置（Web 端口、日志、保留天数）在 `config.toml` / 环境变量里，不进表；与数据源定义无关。
+- **凭据两种来源（二选一，环境变量优先）**：
+  - 「凭据引用」填环境变量名（如 `CLASH_SECRET`），运行时从该环境变量读真值（适合 Docker / 高级用法）；
+  - 或「API 密钥」直接填写，密钥**轻量可逆混淆后存进 `data_sources` 表**（`credential_value` 列）。这是混淆不是加密，只防「随手翻库看到明文」；页面与接口都**不回显**明文或混淆串，只返回「来源 env/table + 是否已配置」。编辑时密钥框留空表示不修改。详见 [配置与部署](configuration.md)。
+- **空表是合法状态，且是全新部署的初始状态**：v2.2.0 起**不做任何播种**，初始 0 数据源。在线状态页显示「暂无数据源」引导、不请求 `/api/gantt`；管理页空表提供「添加 Clash 源 / 添加 IPFIX 源」快捷按钮（只预填默认值，保存前可改）。删光所有数据源后重启保持空表，不会复活。
 
 ### Clash 源（代理轮询）
 
-轮询外部控制器 `/connections`，行为与改造前一致；地址、轮询间隔、凭据引用可在管理页配置。凭据真值从凭据引用指向的环境变量读取，取不到时回落到 `config.toml` 的 `[clash].secret`。每条连接按 `[start, last_seen]` 覆盖的每个 5 分钟槽各计一次并发连接。
+轮询外部控制器 `/connections`，行为与改造前一致；地址、轮询间隔、凭据可在管理页配置。凭据解析：数据源 `credential_ref` 非空 → 取它指向的环境变量；为空 → 解混淆表内 `credential_value`。运行时配置只认 `data_sources` 表，**不再回落到 `config.toml` 的 `[clash].secret`**（该段已删除）。每条连接按 `[start, last_seen]` 覆盖的每个 5 分钟槽各计一次并发连接。
 
 ### IPFIX 源（路由器流量推送）
 
@@ -48,19 +50,13 @@
 
 #### RouterOS Traffic Flow 配置要点
 
-- Traffic Flow 目标指向运行本程序的主机 IP 与 UDP 端口（默认 `2055`）。
+- Traffic Flow 目标指向运行本程序的主机 IP 与 UDP 端口（默认 `2055`，在 `/data-sources` 页配置）。
 - 模板只保留上面 8 个 IPv4 字段，取消 NAT Src./Dst. Address 与 Src./Dst. MAC Address。
 - 网络 / 防火墙需放行到采集机该 UDP 端口的报文；Docker 部署要发布 UDP 端口（见下）。
 
-## 配置项（bootstrap 默认值）
+## 数据源配置（v2.2.0 收敛）
 
-数据源运行时的真实配置在 `data_sources` 表；下面的 `config.toml` / 环境变量只用于**首次启动（表为空）时写入内置 IPFIX 源**，以及兼容纯环境变量部署。详见 [配置与部署](configuration.md)。
-
-| 配置项 | 环境变量 | 默认值 | 说明 |
-|---|---|---|---|
-| `[ipfix].port` | `IPFIX_PORT` | `2055` | UDP 监听端口 |
-| `[ipfix].lan` | `IPFIX_LAN` | 本机 IPv4 自动推断 /24 | LAN 网段（逗号分隔），决定哪些源地址算客户端 |
-| `[ipfix].exclude_ips` | `IPFIX_EXCLUDE_IPS` | 空 | 排除 IP（逗号分隔），通常填网关 |
+数据源运行时的真实配置**只认 `data_sources` 表**：`config.toml` 只留 `[server]` 系统项，环境变量只留系统项（`LOG_LEVEL` / `WEB_PORT` / `DB_CLEANUP_DAYS` / `DB_VACUUM_INTERVAL`）与可选的 `CLASH_SECRET`（凭据引用指向它时生效）。`CLASH_HOST` / `CLASH_INTERVAL` / `IPFIX_PORT` / `IPFIX_LAN` / `IPFIX_EXCLUDE_IPS` 等数据源相关 env 与 config 段**全部删除**，不做 env 一次性注入、不播种。全新部署初始 0 源，用户进 `/data-sources` 用快捷按钮添加。详见 [配置与部署](configuration.md)。
 
 Docker 接收推送需发布 UDP 端口，例如 `-p 2055:2055/udp`，compose 里写 `"2055:2055/udp"`。若容器用 macvlan 拿到局域网同网段 IP，推送可直接到容器 IP，按需决定是否发布端口。
 
@@ -68,6 +64,7 @@ Docker 接收推送需发布 UDP 端口，例如 `-p 2055:2055/udp`，compose �
 
 - v2.0.0 是较大的一次改动：多数据源、`Collector` 采集层抽象、活跃强度归一化、数据源管理页。
 - **v2.1.0**：推送源从「上行流数」改为按 `(source, 五元组, 5 分钟槽)` 去重的真实并发连接数（B 方案），新增 `flow_slots` 表；两源单位统一为「并发连接数」，计数不再受 `active-flow-timeout` 切片时长影响。
+- **v2.2.0**：配置来源收敛 —— 数据源定义彻底只认 `data_sources` 表，删掉一次性播种（`app_meta` / `sources_initialized` / `EnsureDefaultSources`），删掉 `[clash]` / `[ipfix]` 配置段与全部数据源相关环境变量；首次启动生成 `config.toml` 后不再退出；数据源表新增 `credential_value` 列支持直接保存轻量混淆后的 Clash 密钥（`CLASH_SECRET` env 保留且优先）。已有的 `data_sources` 行与历史数据保留不动。
 - **数据库迁移基线为 v1.0.4**：升级新增 `activity`、`flow_slots`、`data_sources` 三张表（`CREATE TABLE IF NOT EXISTS`），`connections` 与 `client_names` 结构不变。**`activity` 是旧聚合表，已停写停查**：旧数据只有 `(source, ip, 槽, 流数)`、没有五元组，口径也不同，无法迁移到 `flow_slots`，仅按保留天数清理残留。因此从 v2.0.0 升级到 v2.1.0 后，推送源热度图从升级时刻重新积累，属预期行为。
-- 之后加入的自定义阈值列通过幂等 `ALTER TABLE` 补齐（`PRAGMA table_info` 判列）；仅从旧版升级那一次把内置 `ipfix` 源的阈值迁为 `2,50,200,600,900` 并开启自定义，保证升级零回退，此后管理页改动不会被覆盖。
-- **v1.0.3 及更早版本的历史迁移 / 兼容代码已移除**（旧索引清理、`inbound_name` 名称清理等）。从这些版本升级请先用 v1.0.4 过渡，再升到 v2.1.0。
+- 后加的列（`thresholds` / `custom_thresholds` / `credential_value`）通过幂等 `ALTER TABLE` 补齐（`PRAGMA table_info` 判列）；仅从旧版升级那一次把内置 `ipfix` 源的阈值迁为 `2,50,200,600,900` 并开启自定义，保证升级零回退，此后管理页改动不会被覆盖。
+- **v1.0.3 及更早版本的历史迁移 / 兼容代码已移除**（旧索引清理、`inbound_name` 名称清理等）。从这些版本升级请先用 v1.0.4 过渡，再升到 v2.2.0。

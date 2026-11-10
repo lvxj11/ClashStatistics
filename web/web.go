@@ -382,8 +382,13 @@ func (s *Server) getGanttData(w http.ResponseWriter, r *http.Request) {
 func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// 从 Clash API 获取连接信息：地址/间隔/凭据引用以数据源表为准
-	host, secret, interval := s.clashSource()
+	// 从 Clash API 获取连接信息：地址/间隔/凭据只以数据源表为准
+	// （凭据可由表的 credential_ref 指向环境变量，或直接用表内混淆值）
+	host, secret, interval, ok := s.clashSource()
+	if !ok {
+		http.Error(w, "没有启用的 Clash 数据源，请先在数据源页添加", http.StatusBadRequest)
+		return
+	}
 	connectionInfo, err := utils.GetConnectionsFromClash(host, secret, interval)
 	if err != nil {
 		http.Error(w, "获取连接信息失败: "+err.Error(), http.StatusInternalServerError)
@@ -481,6 +486,7 @@ func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTe
 		TimeZoneOffset string
 		Version        string
 		CurrentYear    string
+		DefaultLAN     string // 快捷添加数据源时预填的 LAN 网段（本机 IPv4 自动推断 /24）
 	}{
 		Title:          title,
 		CurrentPage:    currentPage,
@@ -489,6 +495,7 @@ func (s *Server) renderPage(w http.ResponseWriter, title, currentPage, contentTe
 		TimeZoneOffset: timeZoneOffset,
 		Version:        utils.Version,
 		CurrentYear:    time.Now().Format("2006"),
+		DefaultLAN:     utils.DefaultLANCIDR(),
 	}
 
 	err = tmpl.Execute(w, data)

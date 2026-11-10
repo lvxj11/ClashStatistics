@@ -50,7 +50,7 @@ func (c *ipfixCollector) Start() {
 		port = 2055
 	}
 	if len(c.lanNets) == 0 {
-		log.Warn("数据源 %s 未配置有效 LAN 网段，将不归属任何客户端，请在管理页或 IPFIX_LAN 配置\n", c.src.ID)
+		log.Warn("数据源 %s 未配置有效 LAN 网段，将不归属任何客户端，请在 /data-sources 管理页配置\n", c.src.ID)
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("0.0.0.0:%d", port))

@@ -2,8 +2,8 @@
 <div x-data="dataSources()" x-init="load()">
     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <p class="text-sm opacity-70">
-            数据源定义存于数据库，改动即时生效；系统级配置（端口 / 日志 / 保留天数）仍在 config.toml 或环境变量。
-            凭据只保存引用（环境变量名），页面与接口都不回显明文。
+            数据源定义只认数据库这一张表，改动即时生效；全新部署初始 0 数据源，不做任何播种。系统级配置（端口 / 日志 / 保留天数）在 config.toml 或环境变量里，与数据源无关。
+            Clash 凭据可填环境变量名，或直接填密钥（轻量混淆后存本表、不回显）；环境变量优先，页面与接口都不回显明文。
         </p>
         <button type="button" class="btn btn-sm btn-primary" @click="openNew()">新增数据源</button>
     </div>
@@ -20,7 +20,7 @@
                     <th>类型</th>
                     <th>启用</th>
                     <th>地址 / 端口</th>
-                    <th>凭据引用</th>
+                    <th>凭据</th>
                     <th>热度阈值</th>
                     <th>默认</th>
                     <th>操作</th>
@@ -44,10 +44,12 @@
                                   x-text="src.type === 'clash' ? ('间隔 ' + src.interval + ' ms') : ('LAN ' + (src.lan_cidrs || '未配置'))"></span>
                         </td>
                         <td class="text-xs">
-                            <span class="font-mono" x-text="src.credential_ref || '—'"></span>
+                            <span class="font-mono"
+                                  x-text="src.credential_ref || (src.credential_configured ? '页面已配置' : '—')"></span>
                             <span class="block opacity-60"
-                                  x-show="src.credential_ref"
-                                  x-text="src.credential_configured ? '已配置' : '未配置'"></span>
+                                  x-text="src.credential_source === 'env'
+                                            ? ('环境变量 · ' + (src.credential_configured ? '已配置' : '未配置'))
+                                            : (src.credential_source === 'table' ? '数据表 · 已配置' : '')"></span>
                         </td>
                         <td class="font-mono text-xs">
                             <span x-text="src.custom_thresholds ? src.thresholds : '2,20,50,150,254'"></span>
@@ -62,12 +64,26 @@
                         <td class="flex gap-1">
                             <button type="button" class="btn btn-ghost btn-xs" @click="edit(src)">编辑</button>
                             <button type="button" class="btn btn-ghost btn-xs text-error"
-                                    x-show="src.id !== 'clash'" @click="remove(src)">删除</button>
+                                    @click="remove(src)">删除</button>
                         </td>
                     </tr>
                 </template>
             </tbody>
         </table>
+    </div>
+
+    <!-- 空表引导：删光所有数据源后保持空表，不会被重新播种，这里给出快捷入口 -->
+    <div x-show="loaded && sources.length === 0" x-cloak
+         class="mt-4 border border-dashed border-base-content/20 rounded-lg py-10 px-4 text-center">
+        <p class="font-medium mb-1">暂无数据源</p>
+        <p class="mx-auto mb-4 max-w-xl text-sm opacity-70">
+            在线状态热度按数据源统计，当前没有任何数据源，在线状态页不会显示热度数据。
+            可用下方快捷按钮添加内置类型（只预填默认值，保存前可修改），或点右上角「新增数据源」自定义。
+        </p>
+        <div class="flex flex-wrap justify-center gap-2">
+            <button type="button" class="btn btn-sm btn-primary" @click="quickAdd('clash')">添加 Clash 源</button>
+            <button type="button" class="btn btn-sm btn-outline" @click="quickAdd('ipfix')">添加 IPFIX 源</button>
+        </div>
     </div>
 
     <dialog x-ref="dlg" class="modal">
@@ -93,7 +109,8 @@
                 </label>
                 <label class="flex flex-col gap-1">
                     <span class="text-xs font-medium opacity-70">地址</span>
-                    <input class="input input-sm font-mono" x-model="form.address" />
+                    <input class="input input-sm font-mono" x-model="form.address"
+                           :placeholder="form.type === 'clash' ? '例如 10.0.1.2:9090' : '0.0.0.0'" />
                 </label>
                 <label class="flex flex-col gap-1" x-show="form.type === 'ipfix'">
                     <span class="text-xs font-medium opacity-70">UDP 端口</span>
@@ -104,9 +121,17 @@
                     <input type="number" class="input input-sm font-mono" x-model.number="form.interval" />
                 </label>
                 <label class="flex flex-col gap-1" x-show="form.type === 'clash'">
-                    <span class="text-xs font-medium opacity-70">凭据引用（环境变量名）</span>
+                    <span class="text-xs font-medium opacity-70">凭据引用（环境变量名，可选）</span>
                     <input class="input input-sm font-mono" x-model="form.credential_ref" placeholder="CLASH_SECRET" />
                 </label>
+                <label class="flex flex-col gap-1" x-show="form.type === 'clash'">
+                    <span class="text-xs font-medium opacity-70">API 密钥（直接填写，可选）</span>
+                    <input type="password" class="input input-sm font-mono" x-model="form.credential_secret"
+                           placeholder="留空表示不修改" autocomplete="new-password" />
+                </label>
+                <p class="text-xs opacity-60 sm:col-span-2" x-show="form.type === 'clash'">
+                    两种方式二选一：填环境变量名则从该环境变量读取；或直接填密钥（轻量混淆后存本表）。两者都填时以环境变量为准。密钥不会回显，编辑时留空表示不修改。
+                </p>
                 <label class="flex flex-col gap-1 sm:col-span-2" x-show="form.type === 'ipfix'">
                     <span class="text-xs font-medium opacity-70">LAN 网段（逗号分隔）</span>
                     <input class="input input-sm font-mono" x-model="form.lan_cidrs" placeholder="192.168.1.0/24" />
@@ -153,6 +178,9 @@
     function dataSources() {
         return {
             sources: [],
+            // 快捷模板里的 LAN 默认值：后端按本机 IPv4 自动推断 /24，仅作创建表单常量
+            defaultLAN: '{{.DefaultLAN}}',
+            loaded: false,
             form: {},
             editing: false,
             error: '',
@@ -161,7 +189,7 @@
                 return {
                     id: '', type: 'ipfix', name: '', enabled: true,
                     address: '0.0.0.0', port: 2055, interval: 0,
-                    lan_cidrs: '', exclude_ips: '', credential_ref: '',
+                    lan_cidrs: '', exclude_ips: '', credential_ref: '', credential_secret: '',
                     thresholds: '', custom_thresholds: false,
                     is_default: false, sort_order: 0
                 };
@@ -173,8 +201,31 @@
                         if (!response.ok) throw new Error('HTTP ' + response.status);
                         return response.json();
                     })
-                    .then(data => { this.sources = data || []; })
-                    .catch(err => { this.error = '加载数据源失败: ' + err.message; });
+                    .then(data => { this.sources = data || []; this.loaded = true; })
+                    .catch(err => { this.error = '加载数据源失败: ' + err.message; this.loaded = true; });
+            },
+
+            // 空表快捷模板：只是创建表单的预填常量，不是运行时配置来源。
+            // 端口 2055、间隔 1000、LAN 自动推断、阈值用默认（不勾自定义）。
+            quickAdd(type) {
+                const t = this.empty();
+                if (type === 'clash') {
+                    Object.assign(t, {
+                        id: 'clash', type: 'clash', name: 'Clash 代理',
+                        address: '', interval: 1000, credential_ref: '', credential_secret: '',
+                        sort_order: 0
+                    });
+                } else {
+                    Object.assign(t, {
+                        id: 'ipfix', type: 'ipfix', name: '路由器流量 (IPFIX)',
+                        address: '0.0.0.0', port: 2055,
+                        lan_cidrs: this.defaultLAN, sort_order: 1
+                    });
+                }
+                this.form = t;
+                this.editing = false;
+                this.error = '';
+                this.$refs.dlg.showModal();
             },
 
             openNew() {
@@ -186,6 +237,7 @@
 
             edit(src) {
                 this.form = Object.assign({}, src);
+                this.form.credential_secret = ''; // 只写字段：编辑时永远留空，绝不预填
                 this.editing = true;
                 this.error = '';
                 this.$refs.dlg.showModal();
@@ -197,6 +249,10 @@
                 this.error = '';
                 if (!this.form.id || !this.form.name) {
                     this.error = 'ID 与显示名称不能为空';
+                    return;
+                }
+                if (this.form.type === 'clash' && !this.form.address) {
+                    this.error = 'Clash 源需要填写地址（host:port）';
                     return;
                 }
                 this.put(this.form).then(() => {

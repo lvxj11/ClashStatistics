@@ -10,7 +10,9 @@ services:
       - ./data:/app/data  # 挂载数据目录，存储数据库和日志。注意权限问题。
     user: "1000:1000"  # 使用与容器内相同的用户ID，避免权限问题
     env_file:
-      - .env  # 从 .env 文件加载环境变量
+      # 只放系统级配置（LOG_LEVEL / WEB_PORT / 保留天数等）和可选的 CLASH_SECRET；
+      # 数据源（Clash / IPFIX）请在网页 /data-sources 页添加，不在 .env 里配置。
+      - .env
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped

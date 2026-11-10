@@ -18,11 +18,11 @@ func main() {
 		return
 	}
 
-	// 首先加载配置，以获取日志级别
+	// 加载系统级配置（日志、端口、保留天数等）。首次启动会生成默认 config.toml
+	// 但不退出、直接继续启动，全新部署才能看到「暂无数据源」的空表引导。
 	config, err := utils.LoadConfig()
 	if err != nil {
-		// 配置文件不存在时，生成了默认配置文件并退出
-		// 这里直接使用fmt输出错误信息，因为日志系统还未初始化
+		// 这里直接使用 fmt 输出错误信息，因为日志系统还未初始化
 		fmt.Printf("加载配置失败: %v\n", err)
 		return
 	}
@@ -36,13 +36,11 @@ func main() {
 
 	log := utils.GetLogger()
 
-	// 输出启动信息，同时显示在控制台和日志文件中
-	log.Startup("Clash Host: %s\n", config.ClashHost)
-	log.Startup("Clash Secret: %s\n", config.ClashSecret)
-	log.Startup("Clash Interval: %d\n", config.ClashInterval)
+	// 输出系统级启动信息，同时显示在控制台和日志文件中。
+	// 数据源定义只认 data_sources 表：全新部署初始为 0 源，不做任何播种；
+	// 下面的启动日志只打印表里实际生效的数据源。
 	log.Startup("Log Level: %s\n", config.LogLevel)
 	log.Startup("Web Port: %s\n", config.WebPort)
-	log.Startup("IPFIX UDP Port: %d\n", config.IPFIXPort)
 
 	// 初始化数据库
 	db, err := database.InitDB()
@@ -52,17 +50,25 @@ func main() {
 	}
 	defer db.Close()
 
-	// 首次启动（含从 v1.0.4 升级）写入内置数据源；之后完全以 data_sources 表为准，
-	// 采集器与在线状态页都从这张表读，不覆盖用户在管理页的改动
-	if err := db.EnsureDefaultSources(database.BootstrapConfig{
-		ClashHost:     config.ClashHost,
-		ClashInterval: config.ClashInterval,
-		IPFIXPort:     config.IPFIXPort,
-		IPFIXLAN:      config.IPFIXLAN,
-		IPFIXExclude:  config.IPFIXExclude,
-	}); err != nil {
-		log.Error("初始化默认数据源失败: %v\n", err)
-		return
+	// 启动日志只打印表里实际生效的数据源；凭据只显示来源，绝不打印明文或混淆串。
+	if sources, err := db.GetEnabledSources(); err == nil {
+		for _, src := range sources {
+			switch src.Type {
+			case "clash":
+				credSource := "未配置"
+				switch src.CredentialSource() {
+				case "env":
+					credSource = "环境变量 " + src.CredentialRef
+				case "table":
+					credSource = "数据表"
+				}
+				log.Startup("数据源 %s (clash): %s, 间隔 %d ms, 凭据来源 %s\n",
+					src.ID, src.Address, src.Interval, credSource)
+			case "ipfix":
+				log.Startup("数据源 %s (ipfix): UDP %d, LAN %s\n",
+					src.ID, src.Port, src.LANCIDRs)
+			}
+		}
 	}
 
 	// 创建服务器实例

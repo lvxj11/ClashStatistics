@@ -5,18 +5,18 @@
 - `/` - 重定向到目标统计页面
 - `/host-stats` - 目标统计页面
 - `/sourceip-stats` - 客户端统计页面
-- `/online-time` - 在线状态页面（顶部可切换数据源）
+- `/online-time` - 在线状态页面（顶部可切换数据源；无数据源时显示「暂无数据源」引导，不请求 `/api/gantt`）
 - `/client-names` - 客户端名称管理页面
-- `/data-sources` - 数据源管理页面
+- `/data-sources` - 数据源管理页面（空表时给出「添加 Clash 源 / 添加 IPFIX 源」引导）
 - `/api/stats` - 按目标（域名/IP）聚合的统计数据
 - `/api/sourceip-stats` - 按客户端（源IP）聚合的统计数据
 - `/api/target-detail` - 某个目标的明细（客户端 × 线路 × 规则），参数 `target`
 - `/api/sourceip-detail` - 某个客户端的明细（目标 × 线路 × 规则），参数 `ip`
 - `/api/gantt` - 在线状态数据（按天的 5 分钟时间槽），参数 `date`、`source`（数据源 ID，缺省 / `clash` 为 Clash 代理）
-- `/api/sources` - `GET` 返回启用的数据源列表与默认源 ID，供在线状态页下拉使用
-- `/api/data-sources` - 数据源定义：`GET` 读取全部、`PUT` 新增 / 更新、`DELETE?id=` 删除。含 `thresholds` / `custom_thresholds`（自定义热度阈值，5 个逗号分隔的递增正整数，`PUT` 时校验）；凭据只返回「是否已配置」，不回显明文
+- `/api/sources` - `GET` 返回启用的数据源列表与默认源 ID，供在线状态页下拉使用；无启用源时返回 `{"sources":[],"default":""}`（空表是合法状态）
+- `/api/data-sources` - 数据源定义：`GET` 读取全部、`PUT` 新增 / 更新、`DELETE?id=` 删除。含 `thresholds` / `custom_thresholds`（自定义热度阈值，5 个逗号分隔的递增正整数，`PUT` 时校验）。凭据：`GET` 只返回 `credential_configured` / `credential_source`（`env` / `table` / 空），**不回显明文或混淆串**；`PUT` 用只写字段 `credential_secret` 收明文密钥（混淆后存表、留空表示不修改），或用 `credential_ref` 指向环境变量（env 优先）
 - `/api/client-names` - 客户端名称：`GET` 读取（返回 `names` 与 `knownIPs`）、`PUT` 设置 / 批量导入、 `DELETE?ip=` 清除手动配置
-- `/refresh` - 手动触发一次数据采集
+- `/refresh` - 手动触发一次数据采集；无启用的 Clash 数据源时返回 `400`，提示先到数据源页添加
 
 ## 公共查询参数
 

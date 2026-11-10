@@ -8,7 +8,7 @@
 
     <!-- 第一行：筛选控件。标签统一放在控件上方，避免"标签 + 控件"横排时挤在一起 -->
     <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3">
-        <div class="flex flex-col gap-1">
+        <div class="flex flex-col gap-1" x-show="!noSources">
             <span class="text-xs font-medium opacity-70">数据源</span>
             <select x-model="source" @change="loadGanttChart()" class="select select-sm w-44"
                     x-show="sources.length > 1">
@@ -126,7 +126,24 @@
         </div>
     </div>
 
-    <div x-show="!loading && !error && ganttData.length === 0" class="text-center py-8" x-cloak>
+    <!-- 没有任何数据源：不发 /api/gantt 请求，直接引导去数据源页 -->
+    <div x-show="noSources" class="text-center py-10" x-cloak>
+        <div class="alert alert-info inline-flex text-left">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div>
+                <p class="font-medium">暂无数据源</p>
+                <p class="mt-1 text-xs">
+                    在线状态热度按数据源统计，请先到
+                    <a href="/data-sources" class="link">数据源</a>
+                    页添加 Clash 或 IPFIX 源。
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!loading && !error && !noSources && ganttData.length === 0" class="text-center py-8" x-cloak>
         <div class="alert">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -135,7 +152,7 @@
         </div>
     </div>
 
-    <div x-show="!loading && !error && ganttData.length > 0 && viewRows.length === 0" class="text-center py-8" x-cloak>
+    <div x-show="!loading && !error && !noSources && ganttData.length > 0 && viewRows.length === 0" class="text-center py-8" x-cloak>
         <div class="alert">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -175,6 +192,7 @@
             selectedDate: '{{.CurrentDate}}',
             sources: [],
             source: '',
+            noSources: false,
             sortBy: 'ip',
             search: '',
             loading: true,
@@ -192,7 +210,8 @@
             },
 
             // 先拉取数据源列表与默认源，再按该源加载热度数据。
-            // 数据源接口失败时仍回落到 Clash 默认视图，不让整页空着。
+            // 空表时显示「暂无数据源」引导，不发 /api/gantt 请求；接口失败显示错误，
+            // 不再静默回落到 Clash 默认视图。
             loadSources() {
                 fetch('/api/sources')
                     .then(response => {
@@ -201,14 +220,33 @@
                     })
                     .then(data => {
                         this.sources = data.sources || [];
-                        this.source = data.default || (this.sources[0] ? this.sources[0].id : 'clash');
-                        this.loadGanttChart();
+                        this.source = data.default || (this.sources[0] ? this.sources[0].id : '');
+                        this.noSources = this.sources.length === 0;
+                        if (this.noSources) {
+                            this.clearForNoSources();
+                        } else {
+                            this.loadGanttChart();
+                        }
                     })
-                    .catch(() => {
+                    .catch(error => {
                         this.sources = [];
-                        this.source = 'clash';
-                        this.loadGanttChart();
+                        this.source = '';
+                        this.noSources = false;
+                        this.loading = false;
+                        this.error = '加载数据源失败: ' + error.message;
                     });
+            },
+
+            // 空数据源：清空所有图表派生状态，保持不发 /api/gantt 请求
+            clearForNoSources() {
+                this.loading = false;
+                this.error = null;
+                this.ganttData = [];
+                this.viewRows = [];
+                this.visibleItems = [];
+                this.visibleStartIndex = 0;
+                this.visibleEndIndex = 0;
+                this.hover.visible = false;
             },
 
             // 所有行一次性放进探针、只读一次宽度，避免逐行测量反复触发 reflow；
@@ -248,6 +286,13 @@
             ].join(', '),
 
             loadGanttChart() {
+                // 空数据源时，所有入口（日期 / 数据源切换）都不发 /api/gantt 请求
+                if (!this.source) {
+                    this.noSources = true;
+                    this.clearForNoSources();
+                    return;
+                }
+                this.noSources = false;
                 this.loading = true;
                 this.error = null;
                 this.visibleItems = [];

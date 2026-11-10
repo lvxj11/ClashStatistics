@@ -1,7 +1,6 @@
 package web
 
 import (
-	"os"
 	"sync"
 	"time"
 
@@ -15,21 +14,19 @@ import (
 // 名称发现（DHCP/mDNS）由 Server 独立常驻启动，不依赖本采集器；这里仅在拿到
 // Clash 快照时顺带补充候选，停掉 Clash 源不会影响名称发现。
 type clashCollector struct {
-	db             *database.Database
-	resolver       *discovery.Resolver
-	src            database.DataSource
-	fallbackSecret string
-	stopOnce       sync.Once
-	stop           chan struct{}
+	db       *database.Database
+	resolver *discovery.Resolver
+	src      database.DataSource
+	stopOnce sync.Once
+	stop     chan struct{}
 }
 
 func newClashCollector(s *Server, src database.DataSource) Collector {
 	return &clashCollector{
-		db:             s.db,
-		resolver:       s.resolver,
-		src:            src,
-		fallbackSecret: s.config.ClashSecret,
-		stop:           make(chan struct{}),
+		db:       s.db,
+		resolver: s.resolver,
+		src:      src,
+		stop:     make(chan struct{}),
 	}
 }
 
@@ -51,11 +48,9 @@ func (c *clashCollector) run() {
 	defer ticker.Stop()
 
 	host := c.src.Address
-	// 凭据只以引用（环境变量名）形式存在数据源表里，真值从环境取
-	secret := os.Getenv(c.src.CredentialRef)
-	if secret == "" {
-		secret = c.fallbackSecret
-	}
+	// 凭据按数据源定义解析：credential_ref 指向的环境变量优先，否则解混淆表内值。
+	// 真值只在内存里用，不进日志 / 接口。
+	secret := resolveSecret(c.src)
 
 	for {
 		select {

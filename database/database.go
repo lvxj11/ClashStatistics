@@ -392,8 +392,10 @@ func InitDB() (*Database, error) {
 		);
 	CREATE INDEX IF NOT EXISTS idx_flow_slots_source_slot ON flow_slots(source, slot_ts);
 
-	-- 数据源定义：运行时可增删、频率各异；系统级配置仍留在 config.toml / env。
-	-- credential_ref 只保存凭据引用（环境变量名），不存明文。
+	-- 数据源定义：这是运行时唯一的数据源配置来源，全新部署初始为空表（0 源），
+	-- 由用户在 /data-sources 页添加。系统级配置（端口 / 日志 / 保留天数）不进表。
+	-- credential_ref 只存凭据引用（环境变量名）；credential_value 存轻量混淆后的
+	-- 直接填写的密钥（混淆不是加密，见 utils/secret.go）。两者都是运行时读，绝不回显。
 	CREATE TABLE IF NOT EXISTS data_sources (
 			id             TEXT PRIMARY KEY,
 			type           TEXT NOT NULL,
@@ -405,6 +407,7 @@ func InitDB() (*Database, error) {
 			exclude_ips    TEXT NOT NULL DEFAULT '',
 			interval       INTEGER NOT NULL DEFAULT 0,
 			credential_ref TEXT NOT NULL DEFAULT '',
+		credential_value TEXT NOT NULL DEFAULT '',
 		is_default     INTEGER NOT NULL DEFAULT 0,
 		sort_order     INTEGER NOT NULL DEFAULT 0,
 		thresholds     TEXT NOT NULL DEFAULT '',
@@ -421,10 +424,10 @@ func InitDB() (*Database, error) {
 	// 三张表（上面的 CREATE TABLE IF NOT EXISTS），connections 与 client_names 结构不变。
 	// activity 为旧聚合表，已停写停查，仅按保留天数清理残留。
 	// v1.0.3 及更早版本的历史兼容代码已移除。
-	// 自定义热度阈值是后加的列：CREATE TABLE IF NOT EXISTS 不会改旧表结构，
-	// 所以这里用幂等 ALTER 补齐，并把升级前硬编码的 IPFIX 阈值迁到内置 ipfix 行。
-	if err := migrateSourceThresholds(db); err != nil {
-		return nil, fmt.Errorf("迁移数据源阈值失败: %v", err)
+	// 后加的列（自定义阈值、表内混淆凭据）CREATE TABLE IF NOT EXISTS 不会补，
+	// 所以用幂等 ALTER 补齐；仅从旧版升级那一次把内置 ipfix 源的阈值迁过去。
+	if err := migrateSourceColumns(db); err != nil {
+		return nil, fmt.Errorf("迁移数据源列失败: %v", err)
 	}
 	return &Database{db: db}, nil
 }

@@ -6,16 +6,26 @@ import (
 	"os"
 
 	"clash-statistics/database"
+	"clash-statistics/utils"
 )
 
 func (s *Server) showDataSources(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, "数据源", "data-sources", "data-sources.html")
 }
 
-// dataSourceView 是管理页拿到的视图：只暴露凭据「是否已配置」，绝不回显值。
+// dataSourceInput 是 PUT 的请求体。credential_secret 是只写的明文密钥：
+// 混淆后存入 credential_value，绝不回显；留空表示「不修改」已有凭据。
+type dataSourceInput struct {
+	database.DataSource
+	CredentialSecret string `json:"credential_secret"`
+}
+
+// dataSourceView 是管理页 GET 拿到的视图：只暴露凭据「来源 / 是否已配置」，
+// 既不回显明文，也不回显混淆串（DataSource.CredentialValue 是 json:"-"）。
 type dataSourceView struct {
 	database.DataSource
-	CredentialConfigured bool `json:"credential_configured"`
+	CredentialConfigured bool   `json:"credential_configured"`
+	CredentialSource     string `json:"credential_source"` // "env" | "table" | ""
 }
 
 func (s *Server) handleDataSources(w http.ResponseWriter, r *http.Request) {
@@ -42,10 +52,17 @@ func (s *Server) getDataSources(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]dataSourceView, 0, len(sources))
 	for _, src := range sources {
-		views = append(views, dataSourceView{
-			DataSource:           src,
-			CredentialConfigured: src.CredentialRef != "" && os.Getenv(src.CredentialRef) != "",
-		})
+		view := dataSourceView{
+			DataSource:       src,
+			CredentialSource: src.CredentialSource(),
+		}
+		switch view.CredentialSource {
+		case "env":
+			view.CredentialConfigured = os.Getenv(src.CredentialRef) != ""
+		case "table":
+			view.CredentialConfigured = true
+		}
+		views = append(views, view)
 	}
 	json.NewEncoder(w).Encode(views)
 }
@@ -53,12 +70,13 @@ func (s *Server) getDataSources(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putDataSource(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var src database.DataSource
+	var input dataSourceInput
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := dec.Decode(&src); err != nil {
+	if err := dec.Decode(&input); err != nil {
 		http.Error(w, "请求体无效: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	src := input.DataSource
 	src.ID = cleanInput(src.ID, 64)
 	src.Type = cleanInput(src.Type, 32)
 	src.Name = cleanInput(src.Name, 128)
@@ -72,6 +90,19 @@ func (s *Server) putDataSource(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "自定义阈值无效: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+	}
+
+	// 凭据：填了明文就混淆后覆盖；没填就保留表里的旧值（编辑时密钥框留空表示不修改）。
+	// CredentialValue 是 json:"-"，decode 不会带进来，必须显式保留，否则会被空串覆盖掉。
+	if input.CredentialSecret != "" {
+		src.CredentialValue = utils.ObfuscateSecret(input.CredentialSecret)
+	} else {
+		existing, err := s.db.GetSourceCredentialValue(src.ID)
+		if err != nil {
+			http.Error(w, "读取已有凭据失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		src.CredentialValue = existing
 	}
 
 	if err := s.db.UpsertSource(src); err != nil {

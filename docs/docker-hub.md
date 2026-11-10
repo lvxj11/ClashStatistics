@@ -15,59 +15,44 @@
 docker run -d \
   --name clash-statistics \
   -p 8080:8080 \
-  -e CLASH_HOST=192.168.1.100:9090 \
-  -e CLASH_SECRET=your_secret \
   -v clash-statistics-data:/app/data \
   --restart unless-stopped \
   lvxj11/clash-statistics:latest
 ```
 
-浏览器打开 `http://<宿主机IP>:8080`。
+浏览器打开 `http://<宿主机IP>:8080`，然后到页面 `/data-sources` 添加数据源。
 
-> 在线状态除了 Clash 代理，还可接收路由器 Traffic Flow / IPFIX 推送作为第二个数据源。需要时追加 `-p 2055:2055/udp -e IPFIX_LAN=192.168.1.0/24`（`IPFIX_LAN` 改成你的局域网网段），并在路由器侧把 Traffic Flow 目标指向宿主机。数据源也可在页面 `/data-sources` 里增删改、启停、切换，改动即时生效。详见下方「更多文档」的《多数据源在线状态》。
-
-> **注意：必须配置数据源。** 默认的 `CLASH_HOST=127.0.0.1:9090` 在容器里指向容器自身，连不到宿主机上的 Clash。请填宿主机的**局域网 IP**；若 Clash 与容器在同一台机器上，可用 `host.docker.internal`（Linux 需追加 `--add-host=host.docker.internal:host-gateway`）或 `--network host`。
+> **数据源在网页里配，不在环境变量里配。** 全新部署初始 0 数据源，打开在线状态页会显示「暂无数据源」。点管理页的「添加 Clash 源 / 添加 IPFIX 源」快捷按钮即可（只预填默认值，保存前可改）：
+> - Clash 源：填外部控制器地址（如 `192.168.1.100:9090`）。密钥可直接在页面填写（轻量混淆后存数据表、不回显），也可填环境变量名（如 `CLASH_SECRET`）由环境变量提供（环境变量优先）。若用环境变量，启动时加 `-e CLASH_SECRET=your_secret`。
+> - IPFIX 源：填 LAN 网段与 UDP 端口，并在路由器侧把 Traffic Flow 目标指向宿主机；接收推送时启动容器加 `-p 2055:2055/udp`。这些数据源配置都在网页里完成，与环境变量无关。
 >
-> 另外，若既没有 `config.toml`、又没有任何环境变量，程序首次启动会生成一份默认 `config.toml` **然后退出**并提示修改后重启。所以要么传环境变量（推荐），要么先在挂载卷里放好 `config.toml`。传环境变量时程序仍会生成一份默认 `config.toml`，但环境变量优先级更高，可忽略它。
+> 若 Clash 与容器在同一台机器上，地址可用 `host.docker.internal`（Linux 需追加 `--add-host=host.docker.internal:host-gateway`）或 `--network host`；默认的 `127.0.0.1:9090` 在容器里指向容器自身，连不到宿主机上的 Clash。
+
+> 首次启动会在 `/app/data` 生成一份只含系统项的默认 `config.toml`，然后**直接继续启动**（不会退出）；系统项也可用环境变量覆盖。
 
 ## 配置
 
-优先级（逐项覆盖）：**环境变量 > `/app/data/config.toml` > 默认值**。只写要改的那几项即可。
+配置文件 `/app/data/config.toml` 只放系统级配置，数据源全部在网页 `/data-sources` 页管理。优先级（逐项覆盖）：**环境变量 > `/app/data/config.toml` > 默认值**。只写要改的那几项即可。
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `CLASH_HOST` | `127.0.0.1:9090` | Clash / Mihomo 外部控制器地址（对应 `external-controller`），支持 Clash 与 Mihomo |
-| `CLASH_SECRET` | 空 | 外部控制器密钥（对应 `secret`）；设置后请求带 `Authorization: Bearer <secret>`，留空则不鉴权 |
-| `CLASH_INTERVAL` | `1000` | 轮询间隔（毫秒）。同时作为 `/connections?interval=` 传给 API，越小越容易抓到短连接，请求也更频繁 |
 | `WEB_PORT` | `8080` | Web 服务监听端口（容器内） |
 | `LOG_LEVEL` | `warn` | `debug` / `info` / `warn` / `error` |
 | `DB_CLEANUP_DAYS` | `30` | 连接数据保留天数，启动时清理一次，之后每 24 小时清理一次 |
 | `DB_VACUUM_INTERVAL` | `24` | SQLite `VACUUM` 间隔（小时），启动时不执行 |
-| `IPFIX_PORT` | `2055` | 路由器 IPFIX 推送的 UDP 监听端口（容器内）。需发布 `-p 2055:2055/udp` 才能收到推送 |
-| `IPFIX_LAN` | 自动推断 /24 | LAN 网段，只有落在这里的源地址算客户端；非 /24 网络务必显式配置 |
-| `IPFIX_EXCLUDE_IPS` | 空 | 排除 IP（逗号分隔），通常填网关 |
+| `CLASH_SECRET` | 空 | **可选**。仅当某数据源的「凭据引用」填了 `CLASH_SECRET` 时作为该源密钥；也可以不设，改在页面直接填密钥 |
 | `TZ` | `Asia/Shanghai` | 容器时区 |
 
-> 上面 `IPFIX_*` 是首次启动写入内置数据源的默认值；运行时真实配置在页面 `/data-sources` 维护，凭据只存环境变量引用、不回显明文。
+> `CLASH_HOST` / `CLASH_INTERVAL` / `IPFIX_PORT` / `IPFIX_LAN` / `IPFIX_EXCLUDE_IPS` 等数据源相关环境变量已取消，不做任何「一次性注入 / 播种」。数据源定义只认数据表，删光后重启保持空表。
 
-也可以不用环境变量，只挂一份配置文件。路径必须是 `/app/data/config.toml`，格式为 TOML（字符串要加引号）：
+也可以不用环境变量，只挂一份配置文件。路径必须是 `/app/data/config.toml`，格式为 TOML（字符串要加引号），**只含 `[server]` 系统项**：
 
 ```toml
-[clash]
-host = "192.168.1.100:9090"
-secret = "your_secret"
-interval = 1000
-
 [server]
 log_level = "warn"
 web_port = "8080"
 db_cleanup_days = 30
 db_vacuum_interval = 24
-
-[ipfix]
-port = 2055
-lan = "192.168.1.0/24"
-exclude_ips = ""
 ```
 
 ## 数据持久化
@@ -94,8 +79,8 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      CLASH_HOST: "192.168.1.100:9090"
-      CLASH_SECRET: "your_secret"
+      # 只放系统级配置；数据源请在网页 /data-sources 页添加
+      CLASH_SECRET: "your_secret"   # 可选：数据源凭据引用指向它时生效
       TZ: Asia/Shanghai
     user: "1000:1000"
     restart: unless-stopped
@@ -118,17 +103,17 @@ services:
 ```bash
 docker pull lvxj11/clash-statistics:latest
 docker stop clash-statistics && docker rm clash-statistics
-# 用与原来相同的 -v 挂载和环境变量重新 docker run
+# 用与原来相同的 -v 挂载重新 docker run
 ```
 
-数据库会自动建表 / 迁移，升级不需要手动处理数据；只要 `/app/data` 挂载不变，历史统计就都在。也可以固定版本标签，例如 `lvxj11/clash-statistics:2.1.0`。
+数据库会自动建表 / 迁移，升级不需要手动处理数据；只要 `/app/data` 挂载不变，历史统计与已配置的数据源就都在。也可以固定版本标签，例如 `lvxj11/clash-statistics:2.2.0`。
 
-> **迁移基线为 v1.0.4**：升级新增 `activity`、`flow_slots`、`data_sources` 三张表，`connections` / `client_names` 结构不变、无数据迁移（`activity` 为已停写停查的旧聚合表，仅按保留天数清理残留；在线状态推送源改用 `flow_slots` 后从升级时刻重新积累热度）。v1.0.3 及更早版本的历史迁移代码已移除，请先用 v1.0.4 过渡再升级。
+> **迁移基线为 v1.0.4**：升级新增 `activity`、`flow_slots`、`data_sources` 三张表，`connections` / `client_names` 结构不变、无数据迁移（`activity` 为已停写停查的旧聚合表，仅按保留天数清理残留；在线状态推送源改用 `flow_slots` 后从升级时刻重新积累热度）。后加的列（`thresholds` / `custom_thresholds` / `credential_value`）用幂等 `ALTER TABLE` 补齐。v1.0.3 及更早版本的历史迁移代码已移除，请先用 v1.0.4 过渡再升级。
 
 ## 标签
 
 - `latest` —— 最新发布版本
-- `2.1.0`、`2.0.0`、`1.0.4`、`1.0.3` … —— 与 GitHub Release 对应的语义化版本
+- `2.2.0`、`2.1.0`、`2.0.0`、`1.0.4` … —— 与 GitHub Release 对应的语义化版本
 
 ## 更多文档
 

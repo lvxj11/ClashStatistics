@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"clash-statistics/database"
 	"clash-statistics/utils"
 )
 
@@ -52,35 +53,35 @@ func (s *Server) syncCollectors() {
 	}
 }
 
-// clashSource 供 /refresh 手动刷新使用：优先用数据源表里的 Clash 配置，
-// 没有时回落到 config.toml/env，保证老部署零配置可用。
-func (s *Server) clashSource() (host, secret string, interval int) {
-	if sources, err := s.db.GetSources(); err == nil {
-		for _, src := range sources {
-			if src.ID != "clash" {
-				continue
-			}
-			if src.Address != "" {
-				host = src.Address
-			}
-			if src.Interval > 0 {
-				interval = src.Interval
-			}
-			if src.CredentialRef != "" {
-				secret = os.Getenv(src.CredentialRef)
-			}
+// resolveSecret 按数据源定义解析明文凭据，供 Clash 采集器与 /refresh 共用：
+//   - credential_ref 非空 → 取它指向的环境变量（env 优先）；
+//   - 否则 → 解混淆表内保存的 credential_value。
+//
+// 凭据真值只在内存里用，绝不进接口 / 日志 / 页面。
+func resolveSecret(src database.DataSource) string {
+	switch src.CredentialSource() {
+	case "env":
+		return os.Getenv(src.CredentialRef)
+	case "table":
+		return utils.DeobfuscateSecret(src.CredentialValue)
+	}
+	return ""
+}
+
+// clashSource 只从 data_sources 表读取启用的 Clash 源配置，供 /refresh 手动刷新。
+// 运行时配置只认表，不再回落到 config.toml / env；没有启用的 Clash 源时 ok=false。
+func (s *Server) clashSource() (host, secret string, interval int, ok bool) {
+	sources, err := s.db.GetSources()
+	if err != nil {
+		return "", "", 0, false
+	}
+	for _, src := range sources {
+		if src.Type != "clash" || !src.Enabled {
+			continue
 		}
+		return src.Address, resolveSecret(src), src.Interval, true
 	}
-	if host == "" {
-		host = s.config.ClashHost
-	}
-	if interval <= 0 {
-		interval = s.config.ClashInterval
-	}
-	if secret == "" {
-		secret = s.config.ClashSecret
-	}
-	return host, secret, interval
+	return "", "", 0, false
 }
 
 type sourceOption struct {
@@ -95,6 +96,7 @@ type dataSourceOptions struct {
 }
 
 // getSources 返回启用的数据源与默认源，供在线状态页的下拉使用。
+// 空表时返回空列表与空 default，由前端提示「暂无数据源」，不再硬编码 clash。
 func (s *Server) getSources(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -105,7 +107,7 @@ func (s *Server) getSources(w http.ResponseWriter, r *http.Request) {
 	}
 	defaultID, err := s.db.GetDefaultSource()
 	if err != nil {
-		defaultID = "clash"
+		defaultID = ""
 	}
 
 	out := dataSourceOptions{
