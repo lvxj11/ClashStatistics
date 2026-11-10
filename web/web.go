@@ -29,6 +29,9 @@ type Server struct {
 	config   *utils.Config
 	db       *database.Database
 	resolver *discovery.Resolver // 客户端名称自动发现（可选，失败会安静降级）
+
+	collectors   []Collector
+	collectorsMu sync.Mutex
 }
 
 // NewServer 创建一个新的服务器实例
@@ -100,7 +103,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/target-detail", s.getTargetDetail)
 	mux.HandleFunc("/api/sourceip-detail", s.getSourceIPDetail)
 	mux.HandleFunc("/api/gantt", s.getGanttData)
+	mux.HandleFunc("/api/sources", s.getSources)
 	mux.HandleFunc("/api/client-names", s.handleClientNames)
+	mux.HandleFunc("/api/data-sources", s.handleDataSources)
+	mux.HandleFunc("/data-sources", s.showDataSources)
 	mux.HandleFunc("/refresh", s.refreshData)
 	mux.HandleFunc("/favicon.svg", s.serveFavicon)
 	// 静态资源（CSS / JS / 图标），全部编译进二进制，随程序分发
@@ -162,8 +168,8 @@ func (s *Server) Start(port string) {
 	// 启动完成后，关闭控制台输出，只保留文件输出
 	log.SetConsoleOutput(false)
 
-	// 在单独的 goroutine 中定期获取数据
-	go s.periodicallyRefreshData()
+	// 按数据源表启动各采集器（Clash 轮询 / IPFIX UDP 监听），各自独立降级
+	s.syncCollectors()
 
 	// 在单独的 goroutine 中定期执行数据库维护任务
 	go s.startDatabaseMaintenance()
@@ -177,39 +183,6 @@ func (s *Server) Start(port string) {
 		log.SetConsoleOutput(true)
 		log.Error("启动服务器失败: %v\n", err)
 		return
-	}
-}
-
-// periodicallyRefreshData 定期刷新数据
-func (s *Server) periodicallyRefreshData() {
-	log := utils.GetLogger()
-	ticker := time.NewTicker(time.Duration(s.config.ClashInterval) * time.Millisecond)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		// 从 Clash API 获取连接信息
-		connectionInfo, err := utils.GetConnectionsFromClash(s.config.ClashHost, s.config.ClashSecret, s.config.ClashInterval)
-		if err != nil {
-			log.Error("获取连接信息失败: %v\n", err)
-			continue
-		}
-
-		// 转换 utils.Connection 到 database.Connection
-		dbConnections := make([]database.Connection, len(connectionInfo.Connections))
-		for i, conn := range connectionInfo.Connections {
-			dbConnections[i] = database.FromClashConnection(conn)
-		}
-
-		// 顺带把元数据补充进名称候选缓存（不依赖入库是否成功）
-		s.resolver.ObserveConnections(dbConnections)
-
-		// 保存当前连接到数据库（每次保存时都会更新closed_time为当前时间）
-		err = s.db.SaveConnections(dbConnections)
-		if err != nil {
-			log.Error("保存连接信息到数据库失败: %v\n", err)
-		} else {
-			log.Info("成功保存 %d 个连接到数据库\n", len(dbConnections))
-		}
 	}
 }
 
@@ -395,7 +368,8 @@ func (s *Server) getGanttData(w http.ResponseWriter, r *http.Request) {
 		date = time.Now().Format("2006-01-02") // 使用今天日期
 	}
 
-	ganttData, err := s.db.GetGanttData(date)
+	source := r.URL.Query().Get("source")
+	ganttData, err := s.db.GetGanttData(source, date)
 	if err != nil {
 		http.Error(w, "获取甘特图数据失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -408,8 +382,9 @@ func (s *Server) getGanttData(w http.ResponseWriter, r *http.Request) {
 func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// 从 Clash API 获取连接信息
-	connectionInfo, err := utils.GetConnectionsFromClash(s.config.ClashHost, s.config.ClashSecret, s.config.ClashInterval)
+	// 从 Clash API 获取连接信息：地址/间隔/凭据引用以数据源表为准
+	host, secret, interval := s.clashSource()
+	connectionInfo, err := utils.GetConnectionsFromClash(host, secret, interval)
 	if err != nil {
 		http.Error(w, "获取连接信息失败: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -15,6 +15,11 @@ log_level = "warn"
 web_port = "8080"
 db_cleanup_days = 30
 db_vacuum_interval = 24
+
+[ipfix]
+port = 2055
+lan = ""
+exclude_ips = ""
 ```
 
 文件里没写的项会保留默认值，所以只需要写要改的那几项。字符串必须加引号（TOML 语法要求，例如 `host = "10.0.1.2:9090"`）。
@@ -41,6 +46,18 @@ db_vacuum_interval = 24
 | `log_level` | `LOG_LEVEL` | `warn` | 日志级别：`debug` / `info` / `warn` / `error`，写入 `data/clash_statistics.log` |
 | `db_cleanup_days` | `DB_CLEANUP_DAYS` | `30` | 连接数据的保留天数。启动时清理一次，之后每 24 小时清理一次 |
 | `db_vacuum_interval` | `DB_VACUUM_INTERVAL` | `24` | SQLite `VACUUM` 的执行间隔（小时），用于回收删除数据后的空闲空间。**启动时不执行**，避免拖慢启动 |
+
+### `[ipfix]` —— 路由器流量源（bootstrap 默认值）
+
+> 这一组只用于**首次启动（`data_sources` 表为空）时写入内置 IPFIX 数据源**，以及兼容纯环境变量部署。数据源运行时的真实配置在 `/data-sources` 管理页维护，那里改完即时生效。详见 [多数据源在线状态](data-sources.md)。
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| `port` | `IPFIX_PORT` | `2055` | 接收 NetFlow v9 / IPFIX 推送的 UDP 监听端口 |
+| `lan` | `IPFIX_LAN` | 本机 IPv4 自动推断 /24 | LAN 网段（逗号分隔）；只有落在这里的源地址才算客户端。非 /24 网络务必显式配置 |
+| `exclude_ips` | `IPFIX_EXCLUDE_IPS` | 空 | 排除 IP（逗号分隔），通常填网关，避免网关自身流量被算成一个客户端 |
+
+Docker 部署接收路由器推送时，需要发布该 UDP 端口，例如 `-p 2055:2055/udp`（compose 里写 `"2055:2055/udp"`）。
 
 ## 使用方法
 

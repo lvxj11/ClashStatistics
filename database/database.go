@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -185,11 +184,14 @@ func buildTimeWindow(startTimestamp, endTimestamp int64) (string, []interface{})
 
 // GanttRow 是 /api/gantt 的输出
 // 288 个时间槽里大部分是 0（终端通常断续在线），只传非零槽能显著减小体积，
-// 配合 gzip 效果更明显。SlotIndexes 与 SlotValues 一一对应
+// 配合 gzip 效果更明显。SlotIndexes / SlotValues / RawValues 一一对应：
+// SlotValues 是 1-6 的活跃强度档位（供前端取色，跨源可比），
+// RawValues 是该槽的原始活跃量（并发连接数 / 上行流数，供悬停展示绝对数值）。
 type GanttRow struct {
 	SourceIP    string `json:"SourceIP"`
 	SlotIndexes []int  `json:"SlotIndexes"`
 	SlotValues  []int  `json:"SlotValues"`
+	RawValues   []int  `json:"RawValues"`
 }
 
 // FromClashConnection 将 utils 中采集到的连接转换为数据库存储结构
@@ -348,11 +350,7 @@ func InitDB() (*Database, error) {
 	CREATE INDEX IF NOT EXISTS idx_connections_host ON connections(host);
 	CREATE INDEX IF NOT EXISTS idx_connections_destination_ip ON connections(destination_ip);
 	CREATE INDEX IF NOT EXISTS idx_connections_source_ip ON connections(source_ip);
-	-- start_time 上的索引没有任何查询在使用，历史库中若存在则删除，减少每次写入的索引维护
-	DROP INDEX IF EXISTS idx_connections_start_time;
 	CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp);
-	-- 时间窗过滤用的是 last_seen_timestamp，这个索引原本在迁移里建，
-	-- 迁移代码删除后必须在这里建，否则新库缺索引
 	CREATE INDEX IF NOT EXISTS idx_connections_last_seen_timestamp ON connections(last_seen_timestamp);
 
 	-- 客户端名称映射：与 connections 分开存，连接数据被定期清理时名称不会丢。
@@ -366,22 +364,51 @@ func InitDB() (*Database, error) {
 			auto_updated    INTEGER NOT NULL DEFAULT 0,
 			manual_updated  INTEGER NOT NULL DEFAULT 0
 		);
-	`
+
+	-- 活跃度聚合表：推送式数据源（IPFIX / NetFlow v9）只写这里，绝不混入 connections。
+	-- 落库即聚合，按 5 分钟槽累加，不存原始流；slot_ts 是槽起始 Unix 秒。
+	CREATE TABLE IF NOT EXISTS activity (
+			source    TEXT NOT NULL,
+			ip        TEXT NOT NULL,
+			slot_ts   INTEGER NOT NULL,
+			value     INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (source, ip, slot_ts)
+		);
+	CREATE INDEX IF NOT EXISTS idx_activity_source_slot ON activity(source, slot_ts);
+
+	-- 数据源定义：运行时可增删、频率各异；系统级配置仍留在 config.toml / env。
+	-- credential_ref 只保存凭据引用（环境变量名），不存明文。
+	CREATE TABLE IF NOT EXISTS data_sources (
+			id             TEXT PRIMARY KEY,
+			type           TEXT NOT NULL,
+			name           TEXT NOT NULL,
+			enabled        INTEGER NOT NULL DEFAULT 1,
+			address        TEXT NOT NULL DEFAULT '',
+			port           INTEGER NOT NULL DEFAULT 0,
+			lan_cidrs      TEXT NOT NULL DEFAULT '',
+			exclude_ips    TEXT NOT NULL DEFAULT '',
+			interval       INTEGER NOT NULL DEFAULT 0,
+			credential_ref TEXT NOT NULL DEFAULT '',
+		is_default     INTEGER NOT NULL DEFAULT 0,
+		sort_order     INTEGER NOT NULL DEFAULT 0,
+		thresholds     TEXT NOT NULL DEFAULT '',
+		custom_thresholds INTEGER NOT NULL DEFAULT 0
+	);
+`
 
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
 		return nil, fmt.Errorf("创建表失败: %v", err)
 	}
 
-	// inbound_name 已不再作为自动来源：它是代理侧入站名（如 DEFAULT-TUN），所有
-	// 客户端共用，无法标识设备。清理升级前遗留的这类自动名称，避免继续显示无效值；
-	// WHERE 条件幂等，每次启动执行无副作用。
-	if _, err = db.Exec(`UPDATE client_names
-		SET auto_name = '', auto_source = '', auto_updated = 0
-		WHERE auto_source = 'inbound_name'`); err != nil {
-		return nil, fmt.Errorf("清理历史自动名称失败: %v", err)
+	// v2.0.0 的数据库迁移基线是 v1.0.4：升级新增 activity / data_sources 两张表
+	// （上面的 CREATE TABLE IF NOT EXISTS），connections 与 client_names 结构不变。
+	// v1.0.3 及更早版本的历史兼容代码已移除。
+	// 自定义热度阈值是后加的列：CREATE TABLE IF NOT EXISTS 不会改旧表结构，
+	// 所以这里用幂等 ALTER 补齐，并把升级前硬编码的 IPFIX 阈值迁到内置 ipfix 行。
+	if err := migrateSourceThresholds(db); err != nil {
+		return nil, fmt.Errorf("迁移数据源阈值失败: %v", err)
 	}
-
 	return &Database{db: db}, nil
 }
 
@@ -822,8 +849,8 @@ func calculateTimeSlotIndex(timestamp int64, dateStart time.Time) int {
 	return slotIndex
 }
 
-// GetGanttData 获取甘特图数据
-func (d *Database) GetGanttData(date string) ([]GanttRow, error) {
+// getClashGanttData 从 connections 现算 Clash 代理连接热度（改造前的算法，逐槽保持不变）。
+func (d *Database) getClashGanttData(date string, normalize func(uint16) int) ([]GanttRow, error) {
 	// 计算日期范围的时间戳（使用本地时区）
 	localLoc := time.Now().Location()
 	dateStart, err := time.ParseInLocation("2006-01-02", date, localLoc)
@@ -855,7 +882,7 @@ func (d *Database) GetGanttData(date string) ([]GanttRow, error) {
 
 	// 按sourceIP组织数据。存指针而不是数组值：数组是值类型，
 	// 直接 ganttData[ip] 取出来再改再写回会整块拷贝 288 字节
-	ganttData := make(map[string]*[288]byte)
+	ganttData := make(map[string]*[288]uint16)
 
 	for rows.Next() {
 		var sourceIP string
@@ -874,7 +901,7 @@ func (d *Database) GetGanttData(date string) ([]GanttRow, error) {
 		// 获取或创建时间槽
 		timeSlots, ok := ganttData[sourceIP]
 		if !ok {
-			timeSlots = &[288]byte{}
+			timeSlots = &[288]uint16{}
 			ganttData[sourceIP] = timeSlots
 		}
 
@@ -884,36 +911,14 @@ func (d *Database) GetGanttData(date string) ([]GanttRow, error) {
 
 		// 给从开始到结束的所有时间槽加1
 		for i := startSlot; i <= endSlot; i++ {
-			if timeSlots[i] < 255 {
+			if timeSlots[i] < 65535 {
 				timeSlots[i]++
 			}
 		}
 	}
 
-	// 转成只含非零槽的输出结构（大部分槽是 0，稀疏传输能显著减小体积）
-	// 同上：空结果返回 [] 而不是 null
-	result := []GanttRow{}
-	for sourceIP, timeSlots := range ganttData {
-		row := GanttRow{
-			SourceIP:    sourceIP,
-			SlotIndexes: []int{},
-			SlotValues:  []int{},
-		}
-		for slot, value := range timeSlots {
-			if value > 0 {
-				row.SlotIndexes = append(row.SlotIndexes, slot)
-				row.SlotValues = append(row.SlotValues, int(value))
-			}
-		}
-		result = append(result, row)
-	}
-
-	// 按SourceIP进行自然排序
-	sort.Slice(result, func(i, j int) bool {
-		return naturalIPCompare(result[i].SourceIP, result[j].SourceIP)
-	})
-
-	return result, nil
+	// 稀疏化 + 归一化到 1-6 档 + 自然排序，全部交给各源共用的出口
+	return buildGanttRows(ganttData, normalize), nil
 }
 
 // naturalIPCompare 实现IP地址的自然排序
@@ -998,6 +1003,11 @@ func (d *Database) CleanupOldData(days int) error {
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
+		return err
+	}
+
+	// activity 与 connections 共用同一个 30 天 cutoff，否则推送源的表会无限增长
+	if err := d.CleanupActivity(cutoffTimestamp); err != nil {
 		return err
 	}
 

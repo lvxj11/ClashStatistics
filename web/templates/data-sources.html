@@ -1,0 +1,242 @@
+{{define "content"}}
+<div x-data="dataSources()" x-init="load()">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <p class="text-sm opacity-70">
+            数据源定义存于数据库，改动即时生效；系统级配置（端口 / 日志 / 保留天数）仍在 config.toml 或环境变量。
+            凭据只保存引用（环境变量名），页面与接口都不回显明文。
+        </p>
+        <button type="button" class="btn btn-sm btn-primary" @click="openNew()">新增数据源</button>
+    </div>
+
+    <div x-show="error" class="alert alert-error mb-4" x-cloak>
+        <span x-text="error"></span>
+    </div>
+
+    <div class="overflow-x-auto">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>启用</th>
+                    <th>地址 / 端口</th>
+                    <th>凭据引用</th>
+                    <th>热度阈值</th>
+                    <th>默认</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="src in sources" :key="src.id">
+                    <tr>
+                        <td>
+                            <span x-text="src.name"></span>
+                            <span class="block font-mono text-xs opacity-50" x-text="src.id"></span>
+                        </td>
+                        <td><span class="badge badge-outline badge-sm" x-text="src.type"></span></td>
+                        <td>
+                            <input type="checkbox" class="toggle toggle-sm toggle-primary"
+                                   :checked="src.enabled" @change="toggle(src)" />
+                        </td>
+                        <td class="font-mono text-xs">
+                            <span x-text="src.type === 'clash' ? src.address : (src.address + ':' + src.port)"></span>
+                            <span class="block opacity-60"
+                                  x-text="src.type === 'clash' ? ('间隔 ' + src.interval + ' ms') : ('LAN ' + (src.lan_cidrs || '未配置'))"></span>
+                        </td>
+                        <td class="text-xs">
+                            <span class="font-mono" x-text="src.credential_ref || '—'"></span>
+                            <span class="block opacity-60"
+                                  x-show="src.credential_ref"
+                                  x-text="src.credential_configured ? '已配置' : '未配置'"></span>
+                        </td>
+                        <td class="font-mono text-xs">
+                            <span x-text="src.custom_thresholds ? src.thresholds : '2,20,50,150,254'"></span>
+                            <span class="block opacity-60"
+                                  x-text="src.custom_thresholds ? '自定义' : '默认'"></span>
+                        </td>
+                        <td>
+                            <span x-show="src.is_default" class="badge badge-primary badge-sm">默认</span>
+                            <button x-show="!src.is_default" type="button" class="btn btn-ghost btn-xs"
+                                    @click="setDefault(src)">设为默认</button>
+                        </td>
+                        <td class="flex gap-1">
+                            <button type="button" class="btn btn-ghost btn-xs" @click="edit(src)">编辑</button>
+                            <button type="button" class="btn btn-ghost btn-xs text-error"
+                                    x-show="src.id !== 'clash'" @click="remove(src)">删除</button>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+
+    <dialog x-ref="dlg" class="modal">
+        <div class="modal-box max-w-2xl">
+            <h3 class="font-bold text-lg mb-1" x-text="editing ? '编辑数据源' : '新增数据源'"></h3>
+            <p class="text-xs opacity-60 mb-4" x-show="!editing">新增后可在路由器侧配置 Traffic Flow 目标推送到本机。</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium opacity-70">ID（唯一标识）</span>
+                    <input class="input input-sm font-mono" x-model="form.id" :disabled="editing" />
+                </label>
+                <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium opacity-70">类型</span>
+                    <select class="select select-sm" x-model="form.type">
+                        <option value="ipfix">ipfix（路由器推送）</option>
+                        <option value="clash">clash（代理轮询）</option>
+                    </select>
+                </label>
+                <label class="flex flex-col gap-1 sm:col-span-2">
+                    <span class="text-xs font-medium opacity-70">显示名称</span>
+                    <input class="input input-sm" x-model="form.name" />
+                </label>
+                <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium opacity-70">地址</span>
+                    <input class="input input-sm font-mono" x-model="form.address" />
+                </label>
+                <label class="flex flex-col gap-1" x-show="form.type === 'ipfix'">
+                    <span class="text-xs font-medium opacity-70">UDP 端口</span>
+                    <input type="number" class="input input-sm font-mono" x-model.number="form.port" />
+                </label>
+                <label class="flex flex-col gap-1" x-show="form.type === 'clash'">
+                    <span class="text-xs font-medium opacity-70">采集间隔（毫秒）</span>
+                    <input type="number" class="input input-sm font-mono" x-model.number="form.interval" />
+                </label>
+                <label class="flex flex-col gap-1" x-show="form.type === 'clash'">
+                    <span class="text-xs font-medium opacity-70">凭据引用（环境变量名）</span>
+                    <input class="input input-sm font-mono" x-model="form.credential_ref" placeholder="CLASH_SECRET" />
+                </label>
+                <label class="flex flex-col gap-1 sm:col-span-2" x-show="form.type === 'ipfix'">
+                    <span class="text-xs font-medium opacity-70">LAN 网段（逗号分隔）</span>
+                    <input class="input input-sm font-mono" x-model="form.lan_cidrs" placeholder="192.168.1.0/24" />
+                </label>
+                <label class="flex flex-col gap-1 sm:col-span-2" x-show="form.type === 'ipfix'">
+                    <span class="text-xs font-medium opacity-70">排除 IP（逗号分隔，通常填网关）</span>
+                    <input class="input input-sm font-mono" x-model="form.exclude_ips" placeholder="192.168.1.1" />
+                </label>
+                <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium opacity-70">排序</span>
+                    <input type="number" class="input input-sm font-mono" x-model.number="form.sort_order" />
+                </label>
+                <div class="flex flex-col gap-1 sm:col-span-2">
+                    <span class="text-xs font-medium opacity-70">热度阈值（1–6 档分界值）</span>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" class="checkbox checkbox-sm" x-model="form.custom_thresholds" />
+                        <span class="text-xs">开启自定义（关闭则用默认 2,20,50,150,254）</span>
+                    </label>
+                    <input class="input input-sm font-mono" x-model="form.thresholds"
+                           :disabled="!form.custom_thresholds" placeholder="2,20,50,150,254" />
+                    <span class="text-xs opacity-60">5 个严格递增的正整数，逗号分隔；超过最后一个值为 6 档</span>
+                </div>
+                <div class="flex items-end gap-4 pb-1">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" class="checkbox checkbox-sm" x-model="form.enabled" />
+                        <span class="text-xs">启用</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" class="checkbox checkbox-sm" x-model="form.is_default" />
+                        <span class="text-xs">设为默认</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-sm" @click="close()">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" @click="save()">保存</button>
+            </div>
+        </div>
+    </dialog>
+</div>
+
+<script>
+    function dataSources() {
+        return {
+            sources: [],
+            form: {},
+            editing: false,
+            error: '',
+
+            empty() {
+                return {
+                    id: '', type: 'ipfix', name: '', enabled: true,
+                    address: '0.0.0.0', port: 2055, interval: 0,
+                    lan_cidrs: '', exclude_ips: '', credential_ref: '',
+                    thresholds: '', custom_thresholds: false,
+                    is_default: false, sort_order: 0
+                };
+            },
+
+            load() {
+                return fetch('/api/data-sources')
+                    .then(response => {
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        return response.json();
+                    })
+                    .then(data => { this.sources = data || []; })
+                    .catch(err => { this.error = '加载数据源失败: ' + err.message; });
+            },
+
+            openNew() {
+                this.form = this.empty();
+                this.editing = false;
+                this.error = '';
+                this.$refs.dlg.showModal();
+            },
+
+            edit(src) {
+                this.form = Object.assign({}, src);
+                this.editing = true;
+                this.error = '';
+                this.$refs.dlg.showModal();
+            },
+
+            close() { this.$refs.dlg.close(); },
+
+            save() {
+                this.error = '';
+                if (!this.form.id || !this.form.name) {
+                    this.error = 'ID 与显示名称不能为空';
+                    return;
+                }
+                this.put(this.form).then(() => {
+                    this.close();
+                    this.load();
+                });
+            },
+
+            toggle(src) {
+                src.enabled = !src.enabled;
+                this.put(src).then(() => this.load());
+            },
+
+            setDefault(src) {
+                src.is_default = true;
+                this.put(src).then(() => this.load());
+            },
+
+            remove(src) {
+                if (!confirm('确定删除数据源「' + src.name + '」？其历史活跃度数据会保留但不再显示。')) return;
+                fetch('/api/data-sources?id=' + encodeURIComponent(src.id), { method: 'DELETE' })
+                    .then(response => {
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        return this.load();
+                    })
+                    .catch(err => { this.error = '删除失败: ' + err.message; });
+            },
+
+            put(src) {
+                return fetch('/api/data-sources', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(src)
+                }).then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => { throw new Error(text); });
+                    }
+                }).catch(err => { this.error = '保存失败: ' + err.message; });
+            }
+        }
+    }
+</script>
+{{end}}

@@ -1,5 +1,5 @@
 {{define "content"}}
-<div x-data="onlineTime()" x-init="loadGanttChart()">
+<div x-data="onlineTime()" x-init="loadSources()">
     <!-- 标签列宽度探针：离屏量出所有行里最长的 IP (名称) 像素宽。
          不用字符数估算：IP 是等宽字体、名称字号更小且非等宽，中文名误差尤其大 -->
     <div x-ref="labelProbe" aria-hidden="true"
@@ -8,6 +8,16 @@
 
     <!-- 第一行：筛选控件。标签统一放在控件上方，避免"标签 + 控件"横排时挤在一起 -->
     <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3">
+        <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium opacity-70">数据源</span>
+            <select x-model="source" @change="loadGanttChart()" class="select select-sm w-44"
+                    x-show="sources.length > 1">
+                <template x-for="s in sources" :key="s.id">
+                    <option :value="s.id" x-text="s.name"></option>
+                </template>
+            </select>
+            <span class="text-xs opacity-60" x-show="sources.length <= 1" x-text="sources.length ? sources[0].name : ''"></span>
+        </div>
         <div class="flex flex-col gap-1">
             <span class="text-xs font-medium opacity-70">日期</span>
             <input type="date" x-model="selectedDate" @change="loadGanttChart()" class="input input-sm w-auto" />
@@ -22,7 +32,7 @@
             <select x-model="sortBy" @change="applyView()" class="select select-sm w-36">
                 <option value="ip">按 IP（默认）</option>
                 <option value="online">按在线时长</option>
-                <option value="peak">按峰值连接数</option>
+                <option value="peak">按峰值强度</option>
             </select>
         </div>
     </div>
@@ -33,13 +43,14 @@
             <span x-text="viewRows.length"></span> 个终端<span x-show="viewRows.length !== ganttData.length">，共 <span x-text="ganttData.length"></span> 个</span>
         </p>
         <div class="flex flex-wrap items-center gap-3 text-xs opacity-70">
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-1)"></span>1-2</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-2)"></span>3-20</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-3)"></span>21-50</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-4)"></span>51-150</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-5)"></span>151-254</span>
-            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-6)"></span>255+</span>
-            <span class="opacity-60">单位：并发连接数</span>
+            <span class="opacity-80">活跃强度（低 → 高）</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-1)"></span>1</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-2)"></span>2</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-3)"></span>3</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-4)"></span>4</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-5)"></span>5</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style="background: var(--heat-6)"></span>6</span>
+            <span class="opacity-60">颜色按 1–6 档归一（跨源可比），悬停查看真实数值</span>
         </div>
     </div>
 
@@ -141,8 +152,11 @@
              x-text="hover.name ? (hover.ip + ' (' + hover.name + ')') : hover.ip"></div>
         <div class="mt-1 flex items-baseline gap-2 whitespace-nowrap">
             <span class="font-mono text-xs" x-text="hover.time"></span>
-            <span class="text-xs opacity-70">并发连接数</span>
-            <span class="font-mono text-sm font-semibold" x-text="hover.value"></span>
+            <span class="text-xs opacity-70" x-text="hover.unit"></span>
+            <span class="font-mono text-sm font-semibold"
+                  x-text="hover.value > 0 ? hover.value : '无活动'"></span>
+            <span class="text-xs opacity-60" x-show="hover.value > 0"
+                  x-text="hover.level + ' 档'"></span>
         </div>
         <div class="mt-1 whitespace-nowrap text-xs opacity-70" x-text="hover.summary"></div>
     </div>
@@ -159,13 +173,15 @@
             rowHeight: 24,
             containerHeight: 600,
             selectedDate: '{{.CurrentDate}}',
+            sources: [],
+            source: '',
             sortBy: 'ip',
             search: '',
             loading: true,
             error: null,
             isToday: false,
             nowPercent: 0,
-            hover: { visible: false, x: 0, y: 0, ip: '', name: '', time: '', value: '0', summary: '' },
+            hover: { visible: false, x: 0, y: 0, ip: '', name: '', time: '', value: 0, level: 0, unit: '', summary: '' },
             labelWidth: 200,
 
             // 名称异步到达（或管理页保存后 reload()）时重算列宽
@@ -173,6 +189,26 @@
                 window.addEventListener('client-names-updated', () => {
                     this.$nextTick(() => this.measureLabelWidth());
                 });
+            },
+
+            // 先拉取数据源列表与默认源，再按该源加载热度数据。
+            // 数据源接口失败时仍回落到 Clash 默认视图，不让整页空着。
+            loadSources() {
+                fetch('/api/sources')
+                    .then(response => {
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        return response.json();
+                    })
+                    .then(data => {
+                        this.sources = data.sources || [];
+                        this.source = data.default || (this.sources[0] ? this.sources[0].id : 'clash');
+                        this.loadGanttChart();
+                    })
+                    .catch(() => {
+                        this.sources = [];
+                        this.source = 'clash';
+                        this.loadGanttChart();
+                    });
             },
 
             // 所有行一次性放进探针、只读一次宽度，避免逐行测量反复触发 reflow；
@@ -216,7 +252,8 @@
                 this.error = null;
                 this.visibleItems = [];
                 this.updateNowMarker();
-                fetch('/api/gantt?date=' + this.selectedDate)
+                fetch('/api/gantt?date=' + encodeURIComponent(this.selectedDate) +
+                          '&source=' + encodeURIComponent(this.source))
                     .then(response => {
                         if (!response.ok) {
                             throw new Error('HTTP error! status: ' + response.status);
@@ -241,39 +278,47 @@
             processData() {
                 this.ganttData.forEach(item => {
                     const indexes = item.SlotIndexes || [];
-                    const values = item.SlotValues || [];
+                    const values = item.SlotValues || [];   // 1-6 档，取色 / 排序用
+                    const rawValues = item.RawValues || []; // 原始活跃量，悬停 / 峰值文案用
 
                     // 接口只传非零槽：在线时长就是槽数 × 5 分钟，峰值直接取最大值
                     const activeMinutes = indexes.length * 5;
                     const hours = Math.floor(activeMinutes / 60);
                     const minutes = activeMinutes % 60;
                     const peak = values.length ? Math.max(...values) : 0;
+                    const rawPeak = rawValues.length ? Math.max(...rawValues) : 0;
 
                     // 展开回 288 长度的数组，悬停时按下标 O(1) 取值
                     const slots = new Array(288).fill(0);
+                    const rawSlots = new Array(288).fill(0);
                     for (let i = 0; i < indexes.length; i++) {
                         slots[indexes[i]] = values[i];
+                        rawSlots[indexes[i]] = rawValues[i] || 0;
                     }
 
                     item.slots = slots;
+                    item.rawSlots = rawSlots;
                     item.onlineMinutes = activeMinutes;
                     item.peak = peak;
-                    item.activeTimeText = '在线 ' + hours + 'h ' + minutes + 'm · 峰值 ' + (peak === 255 ? '255+' : peak);
+                    item.activeTimeText = '在线 ' + hours + 'h ' + minutes + 'm · 峰值 ' +
+                        rawPeak + ' ' + this.sourceUnit();
                     item.gradient = this.buildGradient(indexes, values);
                     // 图层顺序：现在线在最上，其次是色块，网格在最下
                     item.background = [this.nowLine(), item.gradient, this.gridImage].filter(Boolean).join(', ');
                 });
             },
 
-            // 连接数分档对应的颜色，用 CSS 变量以便跟随深浅主题
-            heatColor(value) {
-                if (value <= 0) return 'transparent';
-                if (value <= 2) return 'var(--heat-1)';
-                if (value <= 20) return 'var(--heat-2)';
-                if (value <= 50) return 'var(--heat-3)';
-                if (value <= 150) return 'var(--heat-4)';
-                if (value <= 254) return 'var(--heat-5)';
-                return 'var(--heat-6)';
+            // 颜色档位跨源可比，但原始数值的单位随源不同：Clash 是代理并发连接数，
+            // 推送源是路由器上行流记录数。
+            sourceUnit() {
+                return (this.source && this.source !== 'clash') ? '上行流数' : '并发连接数';
+            },
+
+            // 后端已把原始活跃量归一成 1-6 档，这里直接按档取色，
+            // 用 CSS 变量以便跟随深浅主题。颜色表达的是相对本源有多忙，不是绝对连接数。
+            heatColor(level) {
+                const n = Math.max(1, Math.min(6, Math.round(level)));
+                return 'var(--heat-' + n + ')';
             },
 
             // 把 288 个槽压成若干段：连续且同档的合并，段与段之间补 transparent
@@ -361,7 +406,8 @@
                 const rect = event.currentTarget.getBoundingClientRect();
                 const ratio = rect.width ? (event.clientX - rect.left) / rect.width : 0;
                 const slot = Math.max(0, Math.min(287, Math.floor(ratio * 288)));
-                const value = item.slots ? item.slots[slot] : 0;
+                const level = item.slots ? item.slots[slot] : 0;      // 档位
+                const value = item.rawSlots ? item.rawSlots[slot] : 0; // 原始活跃量
 
                 this.hover = {
                     visible: true,
@@ -371,7 +417,9 @@
                     ip: item.SourceIP || 'Unknown',
                     name: clientLabel(item.SourceIP || 'Unknown'),
                     time: this.formatSlotTime(slot),
-                    value: value === 255 ? '255+' : String(value),
+                    value: value,
+                    level: level,
+                    unit: this.sourceUnit(),
                     summary: item.activeTimeText
                 };
             },

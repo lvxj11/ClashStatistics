@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 
@@ -17,31 +18,45 @@ type Config struct {
 	WebPort          string // Web服务器端口号
 	DBCleanupDays    int    // 数据库数据保留天数
 	DBVacuumInterval int    // 数据库VACUUM执行间隔（小时）
+
+	// IPFIX 采集器的 bootstrap 默认值。数据源运行时的真实配置在 data_sources 表，
+	// 这里只用于首次启动（表为空）时写入内置 IPFIX 源，以及兼容直接用 env 部署。
+	IPFIXPort    int    // UDP 监听端口
+	IPFIXLAN     string // LAN 网段（逗号分隔），为空时自动推断本机 /24
+	IPFIXExclude string // 排除 IP（逗号分隔），通常填网关
+}
+
+// DefaultLANCIDR 取本机第一个非回环 IPv4 所在的 /24 作为默认 LAN 网段。
+// 多数家用网络就是这个形态；不是 /24 时应在管理页或 IPFIX_LAN 显式配置。
+func DefaultLANCIDR() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() {
+			continue
+		}
+		ip4 := ipnet.IP.To4()
+		if ip4 == nil {
+			continue
+		}
+		return fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
+	}
+	return ""
 }
 
 // hasValidEnvironmentVariables 检查是否存在有效的环境变量
 func hasValidEnvironmentVariables() bool {
-	// 检查关键环境变量
-	if os.Getenv("CLASH_HOST") != "" {
-		return true
-	}
-	if os.Getenv("CLASH_SECRET") != "" {
-		return true
-	}
-	if os.Getenv("CLASH_INTERVAL") != "" {
-		return true
-	}
-	if os.Getenv("LOG_LEVEL") != "" {
-		return true
-	}
-	if os.Getenv("WEB_PORT") != "" {
-		return true
-	}
-	if os.Getenv("DB_CLEANUP_DAYS") != "" {
-		return true
-	}
-	if os.Getenv("DB_VACUUM_INTERVAL") != "" {
-		return true
+	for _, key := range []string{
+		"CLASH_HOST", "CLASH_SECRET", "CLASH_INTERVAL", "LOG_LEVEL", "WEB_PORT",
+		"DB_CLEANUP_DAYS", "DB_VACUUM_INTERVAL",
+		"IPFIX_PORT", "IPFIX_LAN", "IPFIX_EXCLUDE_IPS",
+	} {
+		if os.Getenv(key) != "" {
+			return true
+		}
 	}
 	return false
 }
@@ -57,6 +72,9 @@ func LoadConfig() (*Config, error) {
 		WebPort:          "8080", // 默认Web端口为8080
 		DBCleanupDays:    30,     // 默认保留30天数据
 		DBVacuumInterval: 24,     // 默认每24小时执行一次VACUUM
+		IPFIXPort:        2055,
+		IPFIXLAN:         DefaultLANCIDR(),
+		IPFIXExclude:     "",
 	}
 
 	// 确保数据目录存在
@@ -120,6 +138,13 @@ var configItems = []configItem{
 			c.DBVacuumInterval = n
 		}
 	}},
+	{"IPFIX_PORT", "ipfix.port", func(c *Config, v string) {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.IPFIXPort = n
+		}
+	}},
+	{"IPFIX_LAN", "ipfix.lan", func(c *Config, v string) { c.IPFIXLAN = v }},
+	{"IPFIX_EXCLUDE_IPS", "ipfix.exclude_ips", func(c *Config, v string) { c.IPFIXExclude = v }},
 }
 
 // configFile 对应 config.toml 的结构
@@ -136,6 +161,11 @@ type configFile struct {
 		DBCleanupDays    int    `toml:"db_cleanup_days"`
 		DBVacuumInterval int    `toml:"db_vacuum_interval"`
 	} `toml:"server"`
+	IPFIX struct {
+		Port       int    `toml:"port"`
+		LAN        string `toml:"lan"`
+		ExcludeIPs string `toml:"exclude_ips"`
+	} `toml:"ipfix"`
 }
 
 // loadConfigFile 读取 config.toml，覆盖已有配置项
@@ -172,6 +202,15 @@ func loadConfigFile(config *Config, configPath string) error {
 	if f.Server.DBVacuumInterval > 0 {
 		config.DBVacuumInterval = f.Server.DBVacuumInterval
 	}
+	if f.IPFIX.Port > 0 {
+		config.IPFIXPort = f.IPFIX.Port
+	}
+	if f.IPFIX.LAN != "" {
+		config.IPFIXLAN = f.IPFIX.LAN
+	}
+	if f.IPFIX.ExcludeIPs != "" {
+		config.IPFIXExclude = f.IPFIX.ExcludeIPs
+	}
 
 	return nil
 }
@@ -190,7 +229,7 @@ func applyEnvOverrides(config *Config) {
 
 // GenerateDefaultConfig 生成默认的 config.toml
 func GenerateDefaultConfig(config *Config) error {
-	content := `# ClashStatistics 配置文件（TOML 格式）
+	content := fmt.Sprintf(`# ClashStatistics 配置文件（TOML 格式）
 # 请根据实际情况修改以下配置
 
 [clash]
@@ -210,7 +249,15 @@ web_port = "8080"
 db_cleanup_days = 30
 # 数据库 VACUUM 执行间隔（小时）
 db_vacuum_interval = 24
-`
+
+[ipfix]
+# 路由器流量推送（Traffic Flow / IPFIX）的 UDP 监听端口
+port = 2055
+# LAN 网段（逗号分隔）；留空时按本机 IPv4 自动推断 /24
+lan = %q
+# 排除 IP（逗号分隔），通常填网关，避免网关自身流量算成一个客户端
+exclude_ips = ""
+`, config.IPFIXLAN)
 
 	// 确保数据目录存在
 	if err := os.MkdirAll("./data", 0755); err != nil {

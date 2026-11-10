@@ -95,55 +95,5 @@ func TestClientNameRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRetiredInboundNameCleanup 回归：升级重启后 InitDB 要清掉历史遗留的
-// inbound_name 自动名称（如 DEFAULT-TUN），其余来源不受影响。
-func TestRetiredInboundNameCleanup(t *testing.T) {
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(orig)
-
-	db, err := InitDB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.UpsertAutoName("192.168.56.96", "DEFAULT-TUN", "inbound_name", 100); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.UpsertAutoName("192.168.56.14", "fnos", "dhcp_option12", 100); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	// 模拟升级后重启
-	db, err = InitDB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	recs, err := db.GetClientNames()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, rec := range recs {
-		if rec.AutoSource == "inbound_name" || rec.AutoName == "DEFAULT-TUN" {
-			t.Fatalf("历史 inbound_name 未被清理: %#v", rec)
-		}
-	}
-	found := false
-	for _, rec := range recs {
-		if rec.IP == "192.168.56.14" && rec.Name == "fnos" && rec.Source == "dhcp_option12" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("清理不应误伤其他来源: %#v", recs)
-	}
-}
+// 注：v2.0.0 的迁移基线是 v1.0.4，历史兼容代码（旧索引清理、inbound_name
+// 名称清理）已移除，对应的升级回归测试也一并移除。v1.0.4 的库结构本身就是最新结构。

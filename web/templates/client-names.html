@@ -15,32 +15,50 @@
         </p>
     </div>
 
-    <!-- 新增 / 编辑 -->
-    <div class="mb-5 rounded-lg border border-base-300 p-4">
-        <p class="font-semibold mb-3 text-sm" x-text="form.ip ? '编辑客户端' : '新增客户端'"></p>
-        <div class="flex flex-wrap items-end gap-3">
-            <label class="flex flex-col gap-1">
-                <span class="text-xs font-medium opacity-70">客户端 IP</span>
-                <input type="text" x-model="form.ip" list="known-ips" placeholder="192.168.1.5"
-                       class="input input-sm w-52 font-mono" />
-                <datalist id="known-ips">
-                    <template x-for="ip in knownIPs" :key="ip">
-                        <option :value="ip"></option>
-                    </template>
-                </datalist>
-            </label>
-            <label class="flex flex-col gap-1">
-                <span class="text-xs font-medium opacity-70">名称</span>
-                <input type="text" x-model="form.name" placeholder="客厅电视" class="input input-sm w-48" />
-            </label>
-            <label class="flex flex-col gap-1">
-                <span class="text-xs font-medium opacity-70">备注（仅悬浮显示）</span>
-                <input type="text" x-model="form.note" placeholder="卧室旧盒子" class="input input-sm w-56" />
-            </label>
-            <button type="button" class="btn btn-sm btn-primary" :disabled="saving" @click="save()">保存</button>
-            <button type="button" class="btn btn-sm btn-ghost" x-show="form.ip" @click="resetForm()">取消</button>
+    <!-- 新增 / 编辑弹窗：默认收起，不占用列表展示面积；<dialog> 由 showModal() 提到顶层 -->
+    <dialog x-ref="clientModal" class="modal" @close="formError = ''">
+        <div class="modal-box max-w-lg flex flex-col gap-3">
+            <div class="flex items-start justify-between gap-4">
+                <h3 class="font-semibold text-sm" x-text="editing ? '编辑客户端' : '新增客户端'"></h3>
+                <form method="dialog">
+                    <button type="submit" class="btn btn-sm btn-circle btn-ghost" aria-label="关闭">✕</button>
+                </form>
+            </div>
+            <div class="flex flex-col gap-3">
+                <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium opacity-70">客户端 IP</span>
+                    <input type="text" x-ref="clientIP" x-model="form.ip" list="known-ips"
+                           placeholder="192.168.1.5" :disabled="editing"
+                           class="input input-sm w-full font-mono" />
+                    <datalist id="known-ips">
+                        <template x-for="ip in knownIPs" :key="ip">
+                            <option :value="ip"></option>
+                        </template>
+                    </datalist>
+                    <span x-show="editing" class="text-xs opacity-60">IP 为主键，编辑时不可修改</span>
+                </label>
+                <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium opacity-70">名称</span>
+                    <input type="text" x-ref="clientName" x-model="form.name" placeholder="客厅电视"
+                           class="input input-sm w-full" />
+                </label>
+                <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium opacity-70">备注（仅悬浮显示）</span>
+                    <input type="text" x-model="form.note" placeholder="卧室旧盒子"
+                           class="input input-sm w-full" />
+                </label>
+            </div>
+            <div x-show="formError" class="alert alert-error text-sm" x-cloak>
+                <span x-text="formError"></span>
+            </div>
+            <div class="modal-action">
+                <form method="dialog">
+                    <button type="submit" class="btn btn-sm btn-ghost">取消</button>
+                </form>
+                <button type="button" class="btn btn-sm btn-primary" :disabled="saving" @click="save()">保存</button>
+            </div>
         </div>
-    </div>
+    </dialog>
 
     <!-- 批量导入弹窗：默认收起，不占用列表展示面积；<dialog> 由 showModal() 提到顶层 -->
     <dialog x-ref="bulkModal" class="modal" @close="bulk = ''; bulkError = ''">
@@ -86,6 +104,7 @@
                 自动识别 <span x-text="autoCount()"></span> 个
             </span>
             <div class="flex items-center gap-2">
+                <button type="button" class="btn btn-xs btn-primary" @click="openNew()">新增客户端</button>
                 <button type="button" class="btn btn-xs btn-outline" @click="openBulk()">批量导入</button>
                 <button type="button" class="btn btn-xs btn-ghost" @click="reload()">刷新</button>
             </div>
@@ -142,6 +161,8 @@
     function clientNamesPage() {
         return {
             form: { ip: '', name: '', note: '' },
+            editing: false,
+            formError: '',
             bulk: '',
             bulkError: '',
             message: '',
@@ -192,14 +213,25 @@
                 }
             },
 
+            openNew() {
+                this.form = { ip: '', name: '', note: '' };
+                this.editing = false;
+                this.formError = '';
+                this.message = '';
+                this.$refs.clientModal.showModal();
+                this.$nextTick(() => this.$refs.clientIP && this.$refs.clientIP.focus());
+            },
             edit(row) {
                 this.form = { ip: row.ip, name: row.manual_name || '', note: row.note || '' };
+                this.editing = true;
+                this.formError = '';
                 this.message = '';
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                this.$refs.clientModal.showModal();
+                this.$nextTick(() => this.$refs.clientName && this.$refs.clientName.focus());
             },
-            resetForm() {
-                this.form = { ip: '', name: '', note: '' };
-                this.message = '';
+            closeClient() {
+                const d = this.$refs.clientModal;
+                if (d && d.open) d.close();
             },
             setMsg(text, kind) { this.message = text; this.messageKind = kind; },
 
@@ -216,8 +248,9 @@
 
             async save() {
                 const ip = this.form.ip.trim();
-                if (!ip) { this.setMsg('请填写客户端 IP', 'error'); return; }
+                if (!ip) { this.formError = '请填写客户端 IP'; return; }
                 this.saving = true;
+                this.formError = '';
                 try {
                     const res = await fetch('/api/client-names', {
                         method: 'PUT',
@@ -225,11 +258,11 @@
                         body: JSON.stringify(this.form)
                     });
                     if (!res.ok) throw new Error(await res.text());
-                    this.resetForm();
                     await this.reload();
                     this.setMsg('已保存', 'ok');
+                    this.closeClient();
                 } catch (e) {
-                    this.setMsg('保存失败: ' + e.message, 'error');
+                    this.formError = '保存失败: ' + e.message;
                 }
                 this.saving = false;
             },

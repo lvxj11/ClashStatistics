@@ -30,8 +30,9 @@ ENV TZ=Asia/Shanghai
 
 USER appuser
 
-# 暴露端口
+# 暴露端口（2055/udp 为可选的路由器 IPFIX 推送接收端口，需另行 -p 发布）
 EXPOSE 8080
+EXPOSE 2055/udp
 
 # 启动命令
 CMD ["/app/clash-statistics"]

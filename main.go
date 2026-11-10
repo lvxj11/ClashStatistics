@@ -42,6 +42,7 @@ func main() {
 	log.Startup("Clash Interval: %d\n", config.ClashInterval)
 	log.Startup("Log Level: %s\n", config.LogLevel)
 	log.Startup("Web Port: %s\n", config.WebPort)
+	log.Startup("IPFIX UDP Port: %d\n", config.IPFIXPort)
 
 	// 初始化数据库
 	db, err := database.InitDB()
@@ -50,6 +51,19 @@ func main() {
 		return
 	}
 	defer db.Close()
+
+	// 首次启动（含从 v1.0.4 升级）写入内置数据源；之后完全以 data_sources 表为准，
+	// 采集器与在线状态页都从这张表读，不覆盖用户在管理页的改动
+	if err := db.EnsureDefaultSources(database.BootstrapConfig{
+		ClashHost:     config.ClashHost,
+		ClashInterval: config.ClashInterval,
+		IPFIXPort:     config.IPFIXPort,
+		IPFIXLAN:      config.IPFIXLAN,
+		IPFIXExclude:  config.IPFIXExclude,
+	}); err != nil {
+		log.Error("初始化默认数据源失败: %v\n", err)
+		return
+	}
 
 	// 创建服务器实例
 	server := web.NewServer(config, db)
