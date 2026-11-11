@@ -117,9 +117,4 @@ docker stop clash-statistics && docker rm clash-statistics
 
 ## 更多文档
 
-- 配置与部署：https://github.com/lvxj11/ClashStatistics/blob/main/docs/configuration.md
-- 多数据源在线状态：https://github.com/lvxj11/ClashStatistics/blob/main/docs/data-sources.md
-- 客户端名称：https://github.com/lvxj11/ClashStatistics/blob/main/docs/client-names.md
-- API 接口：https://github.com/lvxj11/ClashStatistics/blob/main/docs/api.md
-- 项目说明：https://github.com/lvxj11/ClashStatistics/blob/main/docs/project.md
-- 问题反馈：https://github.com/lvxj11/ClashStatistics/issues
+项目地址与完整文档：https://github.com/lvxj11/ClashStatistics
