@@ -36,6 +36,23 @@ func (s *Server) syncCollectors() {
 	}
 	s.collectors = s.collectors[:0]
 
+	// 健康心跳只对「正在采集」的源有意义：重建时清掉已移除 / 已禁用源的心跳，
+	// 新启用的源在首次采集结果出来前按 waiting（启动即探测的源不硬塞成默认，见规格）。
+	s.healthMu.Lock()
+	active := make(map[string]bool, len(sources))
+	for _, src := range sources {
+		active[src.ID] = true
+		if _, ok := s.health[src.ID]; !ok {
+			s.health[src.ID] = &SourceHealth{}
+		}
+	}
+	for id := range s.health {
+		if !active[id] {
+			delete(s.health, id)
+		}
+	}
+	s.healthMu.Unlock()
+
 	for _, src := range sources {
 		var c Collector
 		switch src.Type {

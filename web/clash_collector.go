@@ -14,6 +14,7 @@ import (
 // 名称发现（DHCP/mDNS）由 Server 独立常驻启动，不依赖本采集器；这里仅在拿到
 // Clash 快照时顺带补充候选，停掉 Clash 源不会影响名称发现。
 type clashCollector struct {
+	srv      *Server
 	db       *database.Database
 	resolver *discovery.Resolver
 	src      database.DataSource
@@ -23,6 +24,7 @@ type clashCollector struct {
 
 func newClashCollector(s *Server, src database.DataSource) Collector {
 	return &clashCollector{
+		srv:      s,
 		db:       s.db,
 		resolver: s.resolver,
 		src:      src,
@@ -60,8 +62,12 @@ func (c *clashCollector) run() {
 			connectionInfo, err := utils.GetConnectionsFromClash(host, secret, interval)
 			if err != nil {
 				log.Error("获取连接信息失败: %v\n", err)
+				// 采集失败即一次真实连通失败：累计连败，达阈值后接口返回警告（灰/黄之外）。
+				c.srv.recordClashFail(c.src.ID, err.Error())
 				continue
 			}
+			// 采集成功即一次真实连通证据：清零连败、记下心跳时间。
+			c.srv.recordClashOK(c.src.ID)
 
 			dbConnections := make([]database.Connection, len(connectionInfo.Connections))
 			for i, conn := range connectionInfo.Connections {

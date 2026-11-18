@@ -15,6 +15,7 @@
 - `/api/gantt` - 在线状态数据（按天的 5 分钟时间槽），参数 `date`、`source`（**真实数据源 ID**，严格按该源隔离取数：clash 源读 `connections WHERE source=该ID`、ipfix 源读 `flow_slots WHERE source=该ID`；未知 / 空源返回空结果，不再有硬编码 `clash`）
 - `/api/sources` - `GET` 返回在线状态页跟随的最小信息：`{"default":"<在线默认源ID>","default_name":"<显示名>","has_sources":true/false}`。v3.0.0 取消下拉后不再返回候选列表；`default` 取「在线默认」单选源，未显式设置时回落第一个启用「采集」的源；所有源恒可被设为在线默认，不按 `enabled` 过滤
 - `/api/data-sources` - 数据源定义：`GET` 读取全部、`PUT` 新增 / 更新、`DELETE?id=` 删除。三个开关字段：`enabled`（采集，只控制是否起采集器落库）、`in_summary`（汇总，只控制该 clash 源是否进入目标 / 客户端统计，ipfix 强制 0）、`is_default`（在线默认，单选，设默认时后端清掉其它源）。含 `thresholds` / `custom_thresholds`（自定义在线热度阈值，5 个逗号分隔的递增正整数，`PUT` 时校验）。凭据：`GET` 只返回 `credential_configured` / `credential_source`（`env` / `table` / 空），**不回显明文或混淆串**；`PUT` 用只写字段 `credential_secret` 收明文密钥（混淆后存表、留空表示不修改），或用 `credential_ref` 指向环境变量（env 优先）
+- `/api/data-sources/status` - `GET` 只读，返回数据源运行时有效性（**v3.1.0 新增**，与配置 CRUD 分开）。响应 `{health:{<源id>:{state,last_ok_at,fail_count,message}}}`；`state` 为 `waiting`（黄）/`ok`（绿）/`fail`（红）/`disabled`（灰，采集关闭）。状态由采集动作本身推导，不额外探测、不落库：Clash 连续失败 ≥ 3 次 → `fail`，IPFIX 距最近一次收到流 ≥ 5 分钟 → `fail`。前端每 60 秒轮询
 - `/api/client-names` - 客户端名称：`GET` 读取（返回 `names` 与 `knownIPs`）、`PUT` 设置 / 批量导入、 `DELETE?ip=` 清除手动配置
 - `/refresh` - 手动触发一次数据采集；无启用的 Clash 数据源时返回 `400`，提示先到数据源页添加
 

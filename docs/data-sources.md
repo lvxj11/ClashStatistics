@@ -77,6 +77,8 @@
 
 数据源运行时的真实配置**只认 `data_sources` 表**：`config.toml` 只留 `[server]` 系统项，环境变量只留系统项（`LOG_LEVEL` / `WEB_PORT` / `DB_CLEANUP_DAYS` / `DB_VACUUM_INTERVAL`）与可选的 `CLASH_SECRET`（凭据引用指向它时生效）。`CLASH_HOST` / `CLASH_INTERVAL` / `IPFIX_PORT` / `IPFIX_LAN` / `IPFIX_EXCLUDE_IPS` 等数据源相关 env 与 config 段**全部删除**，不做 env 一次性注入、不播种。全新部署初始 0 源，用户进 `/data-sources` 用快捷按钮添加。详见 [配置与部署](configuration.md)。
 
+**数据源有效性（v3.1.0）**：管理页左侧「状态」列显示每个源的运行时健康。状态由**采集动作本身**推导，不做额外探测、不落库 —— Clash 每次成功 `GET /connections` 即连通证据，IPFIX 每收到一个 UDP 流即到达证据。判据：Clash 连续失败 ≥ 3 次 → 警告（抗单次抖动，成功清零）；IPFIX 距最近一次收到流 ≥ 5 分钟 → 警告（状态在读取时按时间推导，无需后台定时器）。四态：`等待`（黄，采集器已起还没首次结果）、`正常`（绿）、`警告`（红）、`已停用`（灰，采集关闭的源无证据）。重启后从 `等待` 开始是对的。前端每 60 秒轮询只读接口 `GET /api/data-sources/status`。
+
 Docker 接收推送需发布 UDP 端口，例如 `-p 2055:2055/udp`，compose 里写 `"2055:2055/udp"`。若容器用 macvlan 拿到局域网同网段 IP，推送可直接到容器 IP，按需决定是否发布端口。
 
 ## 版本与迁移基线
@@ -84,7 +86,8 @@ Docker 接收推送需发布 UDP 端口，例如 `-p 2055:2055/udp`，compose �
 - v2.0.0 是较大的一次改动：多数据源、`Collector` 采集层抽象、活跃强度归一化、数据源管理页。
 - **v2.1.0**：推送源从「上行流数」改为按 `(source, 五元组, 5 分钟槽)` 去重的真实并发连接数（B 方案），新增 `flow_slots` 表；两源单位统一为「并发连接数」，计数不再受 `active-flow-timeout` 切片时长影响。
 - **v2.2.0**：配置来源收敛 —— 数据源定义彻底只认 `data_sources` 表，删掉一次性播种，删掉 `[clash]` / `[ipfix]` 配置段与全部数据源相关环境变量；首次启动生成 `config.toml` 后不再退出；数据源表新增 `credential_value` 列支持直接保存轻量混淆后的 Clash 密钥。
-- **v3.0.0（当前）**：按源隔离落盘 + 统一切换。三个独立开关（采集 / 汇总 / 在线默认）；`connections` 改 `(source, id)` 复合主键、写入打数据源 ID；在线状态取消页面下拉、严格按「在线默认」真实源 ID 隔离取数；目标 / 客户端统计按「汇总」开关过滤（含明细弹窗）；迁移基线改为 **v2.2.0**，v2.2.0 之前不再支持自动迁移。
+- **v3.0.0**：按源隔离落盘 + 统一切换。三个独立开关（采集 / 汇总 / 在线默认）；`connections` 改 `(source, id)` 复合主键、写入打数据源 ID；在线状态取消页面下拉、严格按「在线默认」真实源 ID 隔离取数；目标 / 客户端统计按「汇总」开关过滤（含明细弹窗）；迁移基线改为 **v2.2.0**，v2.2.0 之前不再支持自动迁移。
+- **v3.1.0（当前）**：数据源管理页新增「状态」列，显示每个源的运行时有效性。状态由**采集动作本身**推导，不做额外探测、不落库 —— Clash 每次成功 `GET /connections` 即连通证据（连续失败 ≥ 3 次转警告、成功清零），IPFIX 每收到一个 UDP 流即到达证据（距最近一次 ≥ 5 分钟转警告）。三态 + 灰：`等待`（黄，启动后还没首次结果）、`正常`（绿）、`警告`（红）、`已停用`（灰，采集关闭的源）。只读接口 `GET /api/data-sources/status` 返回 `{health:{<源id>:{state,last_ok_at,fail_count,message}}}`，前端每 60 秒轮询。
 - **数据库迁移基线为 v2.2.0**：升级只做两件事，都在一个幂等流程里 —— 给 `data_sources` 补 `in_summary` 列（默认 1，ipfix 行强制 0），把无 `source` 列的旧 `connections` 事务性重建为 `(source, id)` 复合主键并整表复制存量数据（**按列名**复制 `INSERT INTO connections (source, 列…) SELECT '', 列… FROM 旧表`，而非 `SELECT *,`——历史库里 `last_seen_timestamp` 等列经 ALTER 追加在表尾、物理顺序与建表 DDL 不同，按位置复制会串列损坏数据；存量行 `source=''`、默认纳入汇总两页）。启动前用 `PRAGMA table_info(data_sources)` 校验 `credential_value` 列存在，低于 v2.2.0 的库（无 `data_sources` 表或缺 `credential_value`）**明确报错、不再静默迁移**，请先用 v2.2.0 过渡。
 - **v2.2.0 之前的历史迁移 / 兼容代码已全部删除**（旧索引清理、`inbound_name` 名称清理、旧版补列、内置 `ipfix` 阈值迁移 `migrateSourceColumns` 等），以减少冗余。
 - 升级代价：在线状态页严格只认该源 ID，存量 `source=''` 历史连接不进在线状态页，升级后在线状态历史热度会消失一段时间、等新数据按源积累（用户已接受）；目标 / 客户端统计不受影响，存量历史连接默认仍纳入汇总。

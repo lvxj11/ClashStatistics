@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"time"
 
 	"clash-statistics/database"
 	"clash-statistics/utils"
@@ -11,6 +12,28 @@ import (
 
 func (s *Server) showDataSources(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, "数据源", "data-sources", "data-sources.html")
+}
+
+// getSourceHealth 是数据源页轮询的只读健康接口，与配置 CRUD 分开：
+// 前端每 60 秒拉一次，避免每次重拉整个配置列表。
+//   - 采集关闭的源 → state=disabled（前端显示灰、不显示有效性标记）；
+//   - 否则按类型推导：Clash 连败计数、IPFIX 距最近成功的时间。
+//
+// 这是读内存时间戳，无探测、无额外网络访问，成本极低。
+func (s *Server) getSourceHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	sources, err := s.db.GetSources()
+	if err != nil {
+		http.Error(w, "读取数据源失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	out := make(map[string]SourceHealthView, len(sources))
+	for _, src := range sources {
+		out[src.ID] = s.getHealthView(src, now)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"health": out})
 }
 
 // dataSourceInput 是 PUT 的请求体。credential_secret 是只写的明文密钥：

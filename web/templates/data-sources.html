@@ -1,12 +1,12 @@
 {{define "content"}}
-<div x-data="dataSources()" x-init="load()">
+<div x-data="dataSources()" x-init="init()">
     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <p class="text-sm opacity-70">
             数据源定义只认数据库这一张表，改动即时生效；全新部署初始 0 数据源，不做任何播种。系统级配置（端口 / 日志 / 保留天数）在 config.toml 或环境变量里，与数据源无关。
             三个开关各管一件事、互不影响：<b>采集</b>只控制是否采集落库；<b>汇总</b>只控制该 Clash 源是否进入目标 / 客户端统计（IPFIX 不适用，仅用于在线状态）；<b>在线默认</b>为单选，决定在线状态页跟随哪个源。三个开关已放在一起、紧跟操作列，目标 / 客户端统计统一在本页按「汇总」配置，不在统计页分别切换，避免数据不配套。
         </p>
         <p class="text-sm opacity-70">
-            Clash 凭据可填环境变量名，或直接填密钥（轻量混淆后存本表、不回显）；环境变量优先，页面与接口都不回显明文。
+            Clash 凭据可填环境变量名，或直接填密钥（轻量混淆后存本表、不回显）；环境变量优先，页面与接口都不回显明文。<b>状态</b>列是运行时有效性：由采集动作本身推导（Clash 连不上、IPFIX 断流即警告），不是额外探测，每 60 秒自动刷新；采集关闭的源显示灰「已停用」，不代表源坏了。
         </p>
         <button type="button" class="btn btn-sm btn-primary" @click="openNew()">新增数据源</button>
     </div>
@@ -19,6 +19,7 @@
         <table class="table table-sm">
             <thead>
                 <tr>
+                    <th class="w-[68px]" title="运行时有效性：由采集动作本身推导，非额外探测。每 60 秒自动刷新">状态</th>
                     <th>名称</th>
                     <th>类型</th>
                     <th>地址 / 端口</th>
@@ -33,6 +34,11 @@
             <tbody>
                 <template x-for="src in sources" :key="src.id">
                     <tr>
+                        <td>
+                            <span class="badge badge-sm whitespace-nowrap" :class="healthBadgeClass(src.id)"
+                                  :title="healthTooltip(src.id)"
+                                  x-text="healthLabel(src.id)"></span>
+                        </td>
                         <td>
                             <span x-text="src.name"></span>
                             <span class="block font-mono text-xs opacity-50" x-text="src.id"></span>
@@ -197,6 +203,9 @@
     function dataSources() {
         return {
             sources: [],
+            // 运行时有效性：{<源id>: {state,last_ok_at,fail_count,message}}，由独立只读接口轮询
+            health: {},
+            healthTimer: null,
             // 快捷模板里的 LAN 默认值：后端按本机 IPv4 自动推断 /24，仅作创建表单常量
             defaultLAN: '{{.DefaultLAN}}',
             loaded: false,
@@ -213,6 +222,54 @@
                     // 汇总开关默认开（clash 源默认纳入目标 / 客户端统计）；ipfix 由后端强制 0
                     in_summary: true, is_default: false, sort_order: 0
                 };
+            },
+
+            // init 代替直接调 load：先加载配置列表，再启动健康轮询（页面生命周期内常驻，60s）
+            init() {
+                this.load();
+                this.loadHealth();
+                this.healthTimer = setInterval(() => this.loadHealth(), 60000);
+            },
+
+            loadHealth() {
+                return fetch('/api/data-sources/status')
+                    .then(response => {
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        return response.json();
+                    })
+                    .then(data => { this.health = (data && data.health) || {}; })
+                    .catch(() => { /* 轮询失败静默，保留上次状态，下个周期再试 */ });
+            },
+
+            // 三态徽章：disabled 灰、ok 绿、fail 红、waiting 黄
+            healthBadgeClass(id) {
+                const st = (this.health[id] || {}).state || 'waiting';
+                switch (st) {
+                    case 'ok': return 'badge-success';
+                    case 'fail': return 'badge-error';
+                    case 'disabled': return 'badge-ghost';
+                    default: return 'badge-warning';
+                }
+            },
+
+            healthLabel(id) {
+                const st = (this.health[id] || {}).state || 'waiting';
+                switch (st) {
+                    case 'ok': return '正常';
+                    case 'fail': return '警告';
+                    case 'disabled': return '已停用';
+                    default: return '等待';
+                }
+            },
+
+            healthTooltip(id) {
+                const h = this.health[id] || {};
+                if (h.message) return h.message;
+                switch (h.state) {
+                    case 'disabled': return '采集已关闭，未在采集，无有效性证据';
+                    case 'waiting': return '采集器已启动，等待首次探测结果';
+                    default: return '';
+                }
             },
 
             load() {

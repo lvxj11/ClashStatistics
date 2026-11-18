@@ -18,6 +18,7 @@ import (
 // 上行（srcAddr 落 LAN）、撤 NAT/MAC、忽略 IPv6 模板、排除网关自身 IP；长流被
 // active-flow-timeout 切片不影响计数（按 五元组 + 5 分钟槽 去重）。
 type ipfixCollector struct {
+	srv      *Server
 	db       *database.Database
 	src      database.DataSource
 	conn     *net.UDPConn
@@ -31,6 +32,7 @@ type ipfixCollector struct {
 
 func newIPFIXCollector(s *Server, src database.DataSource) Collector {
 	return &ipfixCollector{
+		srv:     s,
 		db:      s.db,
 		src:     src,
 		decoder: ipfix.NewDecoder(),
@@ -170,6 +172,9 @@ func (c *ipfixCollector) handlePacket(data []byte, peer net.IP) {
 	if len(records) == 0 {
 		return
 	}
+	// 有效流落地即一次「收到数据」证据：记下心跳时间。状态（OK/Fail）在接口读取时
+	// 按「距最近一次成功」推导，这里只维护 lastOkAt。
+	c.srv.recordIPFIXOk(c.src.ID)
 	if err := c.db.SaveFlows(c.src.ID, records); err != nil {
 		log.Error("保存流记录失败: %v\n", err)
 	}

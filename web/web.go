@@ -32,6 +32,10 @@ type Server struct {
 
 	collectors   []Collector
 	collectorsMu sync.Mutex
+
+	// health 是数据源的运行时健康心跳（内存，不落库）。采集器写入、接口读取。
+	health   map[string]*SourceHealth
+	healthMu sync.RWMutex
 }
 
 // NewServer 创建一个新的服务器实例
@@ -40,6 +44,7 @@ func NewServer(config *utils.Config, db *database.Database) *Server {
 		config:   config,
 		db:       db,
 		resolver: discovery.NewResolver(db),
+		health:   make(map[string]*SourceHealth),
 	}
 }
 
@@ -106,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sources", s.getSources)
 	mux.HandleFunc("/api/client-names", s.handleClientNames)
 	mux.HandleFunc("/api/data-sources", s.handleDataSources)
+	mux.HandleFunc("/api/data-sources/status", s.getSourceHealth)
 	mux.HandleFunc("/data-sources", s.showDataSources)
 	mux.HandleFunc("/refresh", s.refreshData)
 	mux.HandleFunc("/favicon.svg", s.serveFavicon)
