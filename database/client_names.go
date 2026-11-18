@@ -112,6 +112,13 @@ func (d *Database) ClearManualName(ip string) error {
 	return err
 }
 
+// DeleteClientName 完整删除某 IP 的记录（手动配置、备注、自动名称一并删除）。
+// 与 ClearManualName 的区别：后者只清手动、保留自动名称作为兜底。
+func (d *Database) DeleteClientName(ip string) error {
+	_, err := d.db.Exec(`DELETE FROM client_names WHERE ip = ?`, ip)
+	return err
+}
+
 // UpsertAutoName 写入自动识别的名称。只碰 auto_* 列，绝不触碰手动配置。
 // 由自动发现流程调用；优先级判断在发现层完成，这里只负责落地。
 func (d *Database) UpsertAutoName(ip, name, source string, updated int64) error {

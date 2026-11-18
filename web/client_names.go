@@ -105,7 +105,8 @@ func (s *Server) putClientNames(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "count": count})
 }
 
-// deleteClientName 清除某 IP 的手动配置（保留自动名称作为兜底）。
+// deleteClientName 默认只清除某 IP 的手动配置（保留自动名称作为兜底）；
+// 带 all=1 时完整删除整条记录（含自动名称）。
 func (s *Server) deleteClientName(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -114,8 +115,15 @@ func (s *Server) deleteClientName(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 ip 参数", http.StatusBadRequest)
 		return
 	}
-	if err := s.db.ClearManualName(ip); err != nil {
-		http.Error(w, "清除客户端名称失败: "+err.Error(), http.StatusInternalServerError)
+	full := r.URL.Query().Get("all") == "1"
+	var err error
+	if full {
+		err = s.db.DeleteClientName(ip)
+	} else {
+		err = s.db.ClearManualName(ip)
+	}
+	if err != nil {
+		http.Error(w, "删除客户端名称失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

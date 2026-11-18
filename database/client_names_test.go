@@ -95,6 +95,65 @@ func TestClientNameRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDeleteClientName 校验整行删除与「只清手动」的区别：
+// ClearManualName 保留自动名称兜底，DeleteClientName 把整条记录（含自动名称）删掉。
+func TestDeleteClientName(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(orig)
+
+	db, err := InitDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const ip = "192.168.1.9"
+	count := func() int {
+		recs, err := db.GetClientNames()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range recs {
+			if recs[i].IP == ip {
+				return 1
+			}
+		}
+		return 0
+	}
+
+	if err := db.UpsertAutoName(ip, "nas-mdns", "mdns", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertManualName(ip, "客厅 NAS", "备注"); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatal("前置：记录应存在")
+	}
+
+	// 只清手动：记录仍在，自动名称回退
+	if err := db.ClearManualName(ip); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatal("ClearManualName 不应删掉有自动名称的记录")
+	}
+
+	// 整行删除：记录消失
+	if err := db.DeleteClientName(ip); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 {
+		t.Fatal("DeleteClientName 应删除整条记录（含自动名称）")
+	}
+}
+
 // 注：v3.0.0 的迁移基线是 v2.2.0，v2.2.0 之前的历史兼容代码（旧索引清理、
 // inbound_name 名称清理、补列 / 内置阈值迁移）已全部移除，对应的升级回归测试也一并
 // 移除；低于 v2.2.0 的库会在启动时明确报错，不再静默迁移。

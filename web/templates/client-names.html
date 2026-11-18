@@ -13,6 +13,10 @@
             <span class="font-medium">手动配置始终优先</span>：手动名称非空时，自动识别的结果一律忽略（但保留，清除手动后可回退）。
             自动识别（DHCP option 12 优先于 mDNS，另有连接元数据）只是兜底，<span class="font-medium">不保证一定能获取到</span>。
         </p>
+        <p class="opacity-80 mt-1">
+            操作列两种删除：<span class="font-medium">清除手动</span>只清掉手动名称与备注、保留自动名称兜底；
+            <span class="font-medium">删除记录</span>把该 IP 整条记录（含自动名称）一并删除（若之后自动发现再次识别到该 IP，会自动生成新记录）。
+        </p>
     </div>
 
     <!-- 新增 / 编辑弹窗：默认收起，不占用列表展示面积；<dialog> 由 showModal() 提到顶层 -->
@@ -144,9 +148,14 @@
                             <td class="text-xs break-all opacity-80" x-text="row.note || '—'"></td>
                             <td class="text-right whitespace-nowrap">
                                 <button type="button" class="btn btn-xs btn-ghost" @click="edit(row)">编辑</button>
-                                <button type="button" class="btn btn-xs btn-ghost text-error"
+                                <button type="button" class="btn btn-xs btn-ghost"
                                         :disabled="saving" x-show="row.configured"
-                                        @click="clear(row.ip)">清除</button>
+                                        title="只清除手动名称与备注，保留自动识别的名称作为兜底"
+                                        @click="clear(row.ip)">清除手动</button>
+                                <button type="button" class="btn btn-xs btn-ghost text-error"
+                                        :disabled="saving" x-show="row.hasRecord"
+                                        title="完整删除整条记录（含自动识别的名称）"
+                                        @click="remove(row.ip)">删除记录</button>
                             </td>
                         </tr>
                     </template>
@@ -190,7 +199,8 @@
                         manual_name: r.manual_name || '',
                         auto_name: r.auto_name || '',
                         auto_source: r.auto_source || '',
-                        configured: !!r.manual_name
+                        configured: !!r.manual_name,
+                        hasRecord: !!recs[ip]
                     };
                 }).sort((a, b) => a.ip.localeCompare(b.ip, undefined, { numeric: true }));
             },
@@ -276,6 +286,20 @@
                     this.setMsg('已清除手动配置（自动名称保留为兜底）', 'ok');
                 } catch (e) {
                     this.setMsg('清除失败: ' + e.message, 'error');
+                }
+                this.saving = false;
+            },
+
+            async remove(ip) {
+                if (!confirm('确定完整删除客户端「' + ip + '」的记录？手动配置与自动识别的名称都会删除。')) return;
+                this.saving = true;
+                try {
+                    const res = await fetch('/api/client-names?ip=' + encodeURIComponent(ip) + '&all=1', { method: 'DELETE' });
+                    if (!res.ok) throw new Error(await res.text());
+                    await this.reload();
+                    this.setMsg('已完整删除记录（含自动名称）', 'ok');
+                } catch (e) {
+                    this.setMsg('删除失败: ' + e.message, 'error');
                 }
                 this.saving = false;
             },
