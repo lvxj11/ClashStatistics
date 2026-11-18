@@ -384,7 +384,8 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 
 	// 从 Clash API 获取连接信息：地址/间隔/凭据只以数据源表为准
 	// （凭据可由表的 credential_ref 指向环境变量，或直接用表内混淆值）
-	host, secret, interval, ok := s.clashSource()
+	// 同时拿到源 ID，写入时按 (source,id) 隔离落盘。
+	sourceID, host, secret, interval, ok := s.clashSource()
 	if !ok {
 		http.Error(w, "没有启用的 Clash 数据源，请先在数据源页添加", http.StatusBadRequest)
 		return
@@ -403,8 +404,8 @@ func (s *Server) refreshData(w http.ResponseWriter, r *http.Request) {
 
 	s.resolver.ObserveConnections(dbConnections)
 
-	// 保存到数据库
-	err = s.db.SaveConnections(dbConnections)
+	// 保存到数据库（打上对应数据源 ID，按源隔离落盘）
+	err = s.db.SaveConnections(sourceID, dbConnections)
 	if err != nil {
 		http.Error(w, "保存连接信息到数据库失败: "+err.Error(), http.StatusInternalServerError)
 		return

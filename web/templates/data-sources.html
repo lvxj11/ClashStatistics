@@ -3,6 +3,9 @@
     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <p class="text-sm opacity-70">
             数据源定义只认数据库这一张表，改动即时生效；全新部署初始 0 数据源，不做任何播种。系统级配置（端口 / 日志 / 保留天数）在 config.toml 或环境变量里，与数据源无关。
+            三个开关各管一件事、互不影响：<b>采集</b>只控制是否采集落库；<b>汇总</b>只控制该 Clash 源是否进入目标 / 客户端统计（IPFIX 不参与、恒关）；<b>在线默认</b>为单选，决定在线状态页跟随哪个源。目标 / 客户端统计统一在本页按「汇总」配置，不在统计页分别切换，避免数据不配套。
+        </p>
+        <p class="text-sm opacity-70">
             Clash 凭据可填环境变量名，或直接填密钥（轻量混淆后存本表、不回显）；环境变量优先，页面与接口都不回显明文。
         </p>
         <button type="button" class="btn btn-sm btn-primary" @click="openNew()">新增数据源</button>
@@ -18,11 +21,12 @@
                 <tr>
                     <th>名称</th>
                     <th>类型</th>
-                    <th>启用</th>
+                    <th title="只控制是否采集落盘，与能否被选中无关">采集</th>
+                    <th title="只控制该 Clash 源是否进入目标 / 客户端统计；IPFIX 恒不参与">汇总</th>
                     <th>地址 / 端口</th>
                     <th>凭据</th>
-                    <th>热度阈值</th>
-                    <th>默认</th>
+                    <th title="只影响在线状态页的活跃强度分档">在线热度阈值</th>
+                    <th title="单选，决定在线状态页跟随哪个数据源">在线默认</th>
                     <th>操作</th>
                 </tr>
             </thead>
@@ -36,7 +40,17 @@
                         <td><span class="badge badge-outline badge-sm" x-text="src.type"></span></td>
                         <td>
                             <input type="checkbox" class="toggle toggle-sm toggle-primary"
-                                   :checked="src.enabled" @change="toggle(src)" />
+                                   :checked="src.enabled" @change="toggle(src)"
+                                   title="采集：只控制是否采集落盘" />
+                        </td>
+                        <td>
+                            <template x-if="src.type === 'clash'">
+                                <input type="checkbox" class="toggle toggle-sm toggle-primary"
+                                       :checked="src.in_summary" @change="toggleSummary(src)"
+                                       title="汇总：控制该 Clash 源是否进入目标 / 客户端统计" />
+                            </template>
+                            <span x-show="src.type !== 'clash'" class="text-xs opacity-50"
+                                  title="IPFIX 恒不参与目标 / 客户端统计">不参与</span>
                         </td>
                         <td class="font-mono text-xs">
                             <span x-text="src.type === 'clash' ? src.address : (src.address + ':' + src.port)"></span>
@@ -57,9 +71,9 @@
                                   x-text="src.custom_thresholds ? '自定义' : '默认'"></span>
                         </td>
                         <td>
-                            <span x-show="src.is_default" class="badge badge-primary badge-sm">默认</span>
-                            <button x-show="!src.is_default" type="button" class="btn btn-ghost btn-xs"
-                                    @click="setDefault(src)">设为默认</button>
+                            <input type="radio" name="online-default" class="radio"
+                                   :checked="src.is_default" @change="setDefault(src)"
+                                   :title="'设为在线默认：' + src.name" />
                         </td>
                         <td class="flex gap-1">
                             <button type="button" class="btn btn-ghost btn-xs" @click="edit(src)">编辑</button>
@@ -145,7 +159,7 @@
                     <input type="number" class="input input-sm font-mono" x-model.number="form.sort_order" />
                 </label>
                 <div class="flex flex-col gap-1 sm:col-span-2">
-                    <span class="text-xs font-medium opacity-70">热度阈值（1–6 档分界值）</span>
+                    <span class="text-xs font-medium opacity-70">在线热度阈值（1–6 档分界值）</span>
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" class="checkbox checkbox-sm" x-model="form.custom_thresholds" />
                         <span class="text-xs">开启自定义（关闭则用默认 2,20,50,150,254）</span>
@@ -154,14 +168,19 @@
                            :disabled="!form.custom_thresholds" placeholder="2,20,50,150,254" />
                     <span class="text-xs opacity-60">5 个严格递增的正整数，逗号分隔；超过最后一个值为 6 档</span>
                 </div>
-                <div class="flex items-end gap-4 pb-1">
-                    <label class="flex items-center gap-2 cursor-pointer">
+                <div class="flex flex-wrap items-end gap-x-5 gap-y-2 pb-1 sm:col-span-2">
+                    <label class="flex items-center gap-2 cursor-pointer" title="只控制是否采集落盘">
                         <input type="checkbox" class="checkbox checkbox-sm" x-model="form.enabled" />
-                        <span class="text-xs">启用</span>
+                        <span class="text-xs">采集</span>
                     </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
+                    <label class="flex items-center gap-2 cursor-pointer" x-show="form.type === 'clash'"
+                           title="只控制该 Clash 源是否进入目标 / 客户端统计">
+                        <input type="checkbox" class="checkbox checkbox-sm" x-model="form.in_summary" />
+                        <span class="text-xs">汇总</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer" title="单选，决定在线状态页跟随哪个数据源">
                         <input type="checkbox" class="checkbox checkbox-sm" x-model="form.is_default" />
-                        <span class="text-xs">设为默认</span>
+                        <span class="text-xs">在线默认</span>
                     </label>
                 </div>
             </div>
@@ -191,7 +210,8 @@
                     address: '0.0.0.0', port: 2055, interval: 0,
                     lan_cidrs: '', exclude_ips: '', credential_ref: '', credential_secret: '',
                     thresholds: '', custom_thresholds: false,
-                    is_default: false, sort_order: 0
+                    // 汇总开关默认开（clash 源默认纳入目标 / 客户端统计）；ipfix 由后端强制 0
+                    in_summary: true, is_default: false, sort_order: 0
                 };
             },
 
@@ -266,8 +286,15 @@
                 this.put(src).then(() => this.load());
             },
 
+            toggleSummary(src) {
+                src.in_summary = !src.in_summary;
+                this.put(src).then(() => this.load());
+            },
+
+            // 在线默认为单选：先把本地其余行的选中态清掉，radio 组视觉上立即只留一个；
+            // 后端 UpsertSource 也会清掉其它行的 is_default，load() 后拿到权威结果。
             setDefault(src) {
-                src.is_default = true;
+                this.sources.forEach(s => { s.is_default = (s.id === src.id); });
                 this.put(src).then(() => this.load());
             },
 

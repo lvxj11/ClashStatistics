@@ -262,6 +262,185 @@ func parseToTimestamp(timeStr string) (int64, error) {
 	return 0, fmt.Errorf("无法解析时间格式: %s", timeStr)
 }
 
+// connectionsColumns 是 connections 表除 source 之外的全部列。迁移重建时按
+// 「列名」显式 INSERT / SELECT，不依赖物理列顺序——历史库曾用 ALTER TABLE 在末尾
+// 追加过 last_seen_timestamp，物理顺序与建表 DDL 并不一致，若用 SELECT * 按位置
+// 复制会串行错位、损坏存量数据。
+const connectionsColumns = `id, network, type, source_ip, destination_ip, source_port, destination_port,
+	host, dns_mode, uid, process, process_path, special_proxy, special_rules,
+	remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name,
+	inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn,
+	upload, download, start_time, start_timestamp, last_seen_timestamp, chain, chains,
+	rule, rule_payload, source_real_ip, source_real_port, dest_real_ip, dest_real_port`
+
+// connectionsSchema 是 v3.0.0 的连接表结构：按 (source, id) 复合主键隔离各
+// Clash 数据源的写入；存量 v2.2.0 数据迁移重建时 source 留空 ”（仍默认纳入汇总）。
+// InitDB 建表与 migrateToV300 重建共用这一份定义，避免两处 DDL 漂移。
+const connectionsSchema = `CREATE TABLE IF NOT EXISTS connections (
+		source TEXT NOT NULL DEFAULT '',
+		id TEXT NOT NULL,
+		network TEXT,
+		type TEXT,
+		source_ip TEXT,
+		destination_ip TEXT,
+		source_port TEXT,
+		destination_port TEXT,
+		host TEXT,
+		dns_mode TEXT,
+		uid INTEGER,
+		process TEXT,
+		process_path TEXT,
+		special_proxy TEXT,
+		special_rules TEXT,
+		remote_destination TEXT,
+		dscp INTEGER,
+		sniff_host TEXT,
+		inbound_ip TEXT,
+		inbound_port TEXT,
+		inbound_name TEXT,
+		inbound_user TEXT,
+		source_geoip TEXT,
+		destination_geoip TEXT,
+		source_ipasn TEXT,
+		destination_ipasn TEXT,
+		upload INTEGER,
+		download INTEGER,
+		start_time TEXT,
+		start_timestamp INTEGER DEFAULT 0,
+		last_seen_timestamp INTEGER DEFAULT 0,
+		chain TEXT,
+		chains TEXT,
+		rule TEXT,
+		rule_payload TEXT,
+		source_real_ip TEXT,
+		source_real_port TEXT,
+		dest_real_ip TEXT,
+		dest_real_port TEXT,
+		PRIMARY KEY (source, id)
+	);
+`
+
+// connectionsIndexes 是连接表索引。重建表（旧表 rename 后 drop）会连旧索引一起删掉，
+// 因此迁移末尾统一（重）建一次；IF NOT EXISTS 让全新库 / 已迁移库重复执行都安全。
+const connectionsIndexes = `
+	CREATE INDEX IF NOT EXISTS idx_connections_host ON connections(host);
+	CREATE INDEX IF NOT EXISTS idx_connections_destination_ip ON connections(destination_ip);
+	CREATE INDEX IF NOT EXISTS idx_connections_source_ip ON connections(source_ip);
+	CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp);
+	CREATE INDEX IF NOT EXISTS idx_connections_last_seen_timestamp ON connections(last_seen_timestamp);
+`
+
+// tableColumns 用 PRAGMA 读出某张表已有的列名集合。只传代码里的字面表名，
+// 不存在任何用户输入拼接（PRAGMA 不支持占位符）。
+func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, colType string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
+}
+
+// checkMigrationBaseline 在建表前校验升级基线：v3.0.0 只支持从 v2.2.0 自动迁移，
+// 低于该版本的库明确报错，而不是被 CREATE TABLE IF NOT EXISTS 静默补齐后当成新库。
+// 必须在建表前做，否则补齐的表 / 列会抹掉版本痕迹。
+func checkMigrationBaseline(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil // 全新部署：没有任何用户表
+	}
+	cols, err := tableColumns(db, "data_sources")
+	if err != nil {
+		return err
+	}
+	if len(cols) == 0 {
+		return fmt.Errorf("数据库版本低于 v2.2.0（无 data_sources 表），不支持自动迁移到 v3.0.0；请先升级到 v2.2.0")
+	}
+	if !cols["credential_value"] {
+		return fmt.Errorf("数据库版本低于 v2.2.0（data_sources 缺少 credential_value 列），不支持自动迁移到 v3.0.0；请先升级到 v2.2.0")
+	}
+	return nil
+}
+
+// migrateToV300 执行 v2.2.0 → v3.0.0 的幂等迁移：补 in_summary 列、重建 connections
+// 为 (source,id) 复合主键。旧版（低于 v2.2.0）已在 checkMigrationBaseline 拦截。
+// v2.2.0 之前那些补列 / 内置 ipfix 阈值迁移代码已删除，不再保留。
+func migrateToV300(db *sql.DB) error {
+	// 补 in_summary：默认 1，让存量 clash 源默认纳入汇总（与存量 connections
+	// 数据 source='' 默认纳入汇总配套）；ipfix 行强制 0，不参与目标 / 客户端统计。
+	dsCols, err := tableColumns(db, "data_sources")
+	if err != nil {
+		return err
+	}
+	if !dsCols["in_summary"] {
+		if _, err := db.Exec(`ALTER TABLE data_sources ADD COLUMN in_summary INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`UPDATE data_sources SET in_summary = 0 WHERE type = 'ipfix'`); err != nil {
+			return err
+		}
+	}
+
+	// connections 重建：旧表无 source 列 → 换成 (source,id) 复合主键并保留数据。
+	connCols, err := tableColumns(db, "connections")
+	if err != nil {
+		return err
+	}
+	if !connCols["source"] {
+		if err := rebuildConnectionsV300(db); err != nil {
+			return err
+		}
+	}
+
+	// 连接表索引：重建后旧索引已随旧表删除，这里统一（重）建一次。
+	_, err = db.Exec(connectionsIndexes)
+	return err
+}
+
+// rebuildConnectionsV300 把无 source 列的旧 connections 重建为 (source,id) 复合主键，
+// 存量数据整体复制并打上 source=”。整段在一个事务里完成，失败自动回滚。
+func rebuildConnectionsV300(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 旧表改名，其上的索引随之归属旧表
+	if _, err := tx.Exec(`ALTER TABLE connections RENAME TO connections_v220`); err != nil {
+		return err
+	}
+	// 此刻已无 connections 表，用新结构重建（IF NOT EXISTS 无副作用）
+	if _, err := tx.Exec(connectionsSchema); err != nil {
+		return err
+	}
+	// 存量数据按「列名」复制：历史库曾用 ALTER TABLE 在末尾追加过列，物理顺序与
+	// 建表 DDL 不一致，绝不能用 SELECT * 按位置复制（会串行错位）。显式列出目标列
+	// 和来源列，SQLite 按列名对应，与顺序无关；首列 source 统一填 ''。
+	if _, err := tx.Exec(`INSERT INTO connections (source, ` + connectionsColumns + `)
+		SELECT '', ` + connectionsColumns + ` FROM connections_v220`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE connections_v220`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // InitDB 初始化数据库
 func InitDB() (*Database, error) {
 	// 确保数据目录存在
@@ -301,57 +480,15 @@ func InitDB() (*Database, error) {
 		return nil, fmt.Errorf("设置 cache_size 失败: %v", err)
 	}
 
-	// 创建表
-	sqlStmt := `
-	CREATE TABLE IF NOT EXISTS connections (
-			id TEXT PRIMARY KEY,
-			network TEXT,
-			type TEXT,
-			source_ip TEXT,
-			destination_ip TEXT,
-			source_port TEXT,
-			destination_port TEXT,
-			host TEXT,
-			dns_mode TEXT,
-			uid INTEGER,
-			process TEXT,
-			process_path TEXT,
-			special_proxy TEXT,
-			special_rules TEXT,
-			remote_destination TEXT,
-			dscp INTEGER,
-			sniff_host TEXT,
-			inbound_ip TEXT,
-			inbound_port TEXT,
-			inbound_name TEXT,
-			inbound_user TEXT,
-			source_geoip TEXT,
-			destination_geoip TEXT,
-			source_ipasn TEXT,
-			destination_ipasn TEXT,
-			upload INTEGER,
-			download INTEGER,
-			start_time TEXT,
-			start_timestamp INTEGER DEFAULT 0,
-			-- 这条连接最后一次出现在 Clash 返回结果里的时间（秒级时间戳）
-			-- 注意：不是真正的关闭时间，Clash API 不提供关闭事件，这个值每次轮询都会被刷新
-			last_seen_timestamp INTEGER DEFAULT 0,
-			chain TEXT,
-			chains TEXT,
-			rule TEXT,
-			rule_payload TEXT,
-			source_real_ip TEXT,
-			source_real_port TEXT,
-			dest_real_ip TEXT,
-			dest_real_port TEXT
-		);
-	
-	-- 创建索引
-	CREATE INDEX IF NOT EXISTS idx_connections_host ON connections(host);
-	CREATE INDEX IF NOT EXISTS idx_connections_destination_ip ON connections(destination_ip);
-	CREATE INDEX IF NOT EXISTS idx_connections_source_ip ON connections(source_ip);
-	CREATE INDEX IF NOT EXISTS idx_connections_start_timestamp ON connections(start_timestamp);
-	CREATE INDEX IF NOT EXISTS idx_connections_last_seen_timestamp ON connections(last_seen_timestamp);
+	// 升级基线校验：v3.0.0 只支持从 v2.2.0 自动迁移，低于该版本明确报错。
+	// 必须在 CREATE TABLE IF NOT EXISTS 之前做，否则补齐的表 / 列会抹掉版本痕迹。
+	if err := checkMigrationBaseline(db); err != nil {
+		return nil, err
+	}
+
+	// 建表：全新库直接按 v3.0.0 结构创建（含 connections.source 复合主键 / in_summary）。
+	// 已有库由 migrateToV300 补列 / 重建。连接表 DDL 与索引拆成共享常量，供迁移复用。
+	sqlStmt := connectionsSchema + `
 
 	-- 客户端名称映射：与 connections 分开存，连接数据被定期清理时名称不会丢。
 	-- 手动与自动分列，写自动名称永远碰不到手动列（手动配置为第一优先）。
@@ -394,6 +531,9 @@ func InitDB() (*Database, error) {
 
 	-- 数据源定义：这是运行时唯一的数据源配置来源，全新部署初始为空表（0 源），
 	-- 由用户在 /data-sources 页添加。系统级配置（端口 / 日志 / 保留天数）不进表。
+	-- enabled 只控制「采集落盘」（是否起采集器、是否写库），与能否被选中无关；
+	-- in_summary 只控制该 clash 源是否进入目标 / 客户端统计（ipfix 恒为 0）；
+	-- is_default 单选，只决定在线状态页跟随哪个源。存量无来源 connections 默认纳入汇总。
 	-- credential_ref 只存凭据引用（环境变量名）；credential_value 存轻量混淆后的
 	-- 直接填写的密钥（混淆不是加密，见 utils/secret.go）。两者都是运行时读，绝不回显。
 	CREATE TABLE IF NOT EXISTS data_sources (
@@ -411,29 +551,28 @@ func InitDB() (*Database, error) {
 		is_default     INTEGER NOT NULL DEFAULT 0,
 		sort_order     INTEGER NOT NULL DEFAULT 0,
 		thresholds     TEXT NOT NULL DEFAULT '',
-		custom_thresholds INTEGER NOT NULL DEFAULT 0
+		custom_thresholds INTEGER NOT NULL DEFAULT 0,
+		in_summary     INTEGER NOT NULL DEFAULT 1
 	);
-`
+` + connectionsIndexes
 
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
 		return nil, fmt.Errorf("创建表失败: %v", err)
 	}
 
-	// v2.0.0 的数据库迁移基线是 v1.0.4：升级新增 activity / flow_slots / data_sources
-	// 三张表（上面的 CREATE TABLE IF NOT EXISTS），connections 与 client_names 结构不变。
-	// activity 为旧聚合表，已停写停查，仅按保留天数清理残留。
-	// v1.0.3 及更早版本的历史兼容代码已移除。
-	// 后加的列（自定义阈值、表内混淆凭据）CREATE TABLE IF NOT EXISTS 不会补，
-	// 所以用幂等 ALTER 补齐；仅从旧版升级那一次把内置 ipfix 源的阈值迁过去。
-	if err := migrateSourceColumns(db); err != nil {
-		return nil, fmt.Errorf("迁移数据源列失败: %v", err)
+	// v3.0.0 的迁移基线是 v2.2.0：补 in_summary 列、把 connections 重建为
+	// (source,id) 复合主键并按源隔离落盘。v2.2.0 之前的库已在 checkMigrationBaseline
+	// 明确报错；旧版补列 / 内置 ipfix 阈值迁移代码已删除。
+	if err := migrateToV300(db); err != nil {
+		return nil, fmt.Errorf("迁移到 v3.0.0 失败: %v", err)
 	}
 	return &Database{db: db}, nil
 }
 
-// SaveConnections 保存多个连接到数据库
-func (d *Database) SaveConnections(connections []Connection) error {
+// SaveConnections 把某个 Clash 数据源的连接快照写入数据库。source 是该数据源的
+// ID，作为 (source,id) 复合主键的一部分，实现各源按来源隔离落盘。
+func (d *Database) SaveConnections(source string, connections []Connection) error {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
@@ -444,14 +583,14 @@ func (d *Database) SaveConnections(connections []Connection) error {
 	// 以及那些首次可能为空、之后才被 sniffer 补全的描述字段。
 	// 用 UPSERT 而不是 INSERT OR REPLACE，避免每次轮询都整行删除重插（会把所有索引一起重写）
 	stmt, err := tx.Prepare(`INSERT INTO connections (
-		id, network, type, source_ip, destination_ip, source_port, destination_port, 
+		source, id, network, type, source_ip, destination_ip, source_port, destination_port, 
 		host, dns_mode, uid, process, process_path, special_proxy, special_rules, 
 		remote_destination, dscp, sniff_host, inbound_ip, inbound_port, inbound_name, 
 		inbound_user, source_geoip, destination_geoip, source_ipasn, destination_ipasn, 
 		upload, download, start_time, start_timestamp, last_seen_timestamp, chain, chains, rule, rule_payload, source_real_ip, 
 		source_real_port, dest_real_ip, dest_real_port
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(id) DO UPDATE SET
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(source, id) DO UPDATE SET
 		upload = excluded.upload,
 		download = excluded.download,
 		last_seen_timestamp = excluded.last_seen_timestamp,
@@ -501,7 +640,7 @@ func (d *Database) SaveConnections(connections []Connection) error {
 		}
 
 		_, err = stmt.Exec(
-			conn.ID, conn.Network, conn.ConnectionType, conn.SourceIPAddr, conn.DestinationIP,
+			source, conn.ID, conn.Network, conn.ConnectionType, conn.SourceIPAddr, conn.DestinationIP,
 			conn.SourcePortNum, conn.DestinationPort, conn.Host, conn.DNSMode, conn.Uid,
 			conn.Process, conn.ProcessPath, conn.SpecialProxy, conn.SpecialRules,
 			conn.RemoteDestination, conn.DSCP, conn.SniffHost, conn.InboundIP, conn.InboundPort,
@@ -548,6 +687,18 @@ func buildOrderBy(sortKey, order string) string {
 		order = "desc"
 	}
 	return fmt.Sprintf("ORDER BY %s %s", column, order)
+}
+
+// summarySourceCond 是目标 / 客户端统计（含明细弹窗）的来源过滤条件：
+// 只统计「升级前遗留的无来源数据（source=”）」与「当前勾选了汇总的 clash 源」。
+// ipfix 源不写 connections、且 in_summary 恒为 0，天然不参与这两页。
+// 用子查询而不是拼 ID 列表：源配置随时可变且 ID 是用户输入，绝不拼进 SQL。
+const summarySourceCond = `(source = '' OR source IN (SELECT id FROM data_sources WHERE in_summary = 1 AND type = 'clash'))`
+
+// withSummarySource 把汇总来源过滤追加到基础 WHERE 上。baseWhere 自身可能含 OR，
+// 必须先整体加括号，避免与后续 AND 条件因优先级串味。
+func withSummarySource(baseWhere string) string {
+	return "(" + baseWhere + ") AND " + summarySourceCond
 }
 
 // buildConditions 拼装查询条件：基础过滤 + 时间窗 + 搜索
@@ -601,7 +752,7 @@ func (d *Database) GetSourceIPStatsWithRange(startTimestamp, endTimestamp int64,
 func (d *Database) queryStats(baseWhere, groupExpr, peerExpr string,
 	startTimestamp, endTimestamp int64, search, sortBy, order string) (*StatsResult, error) {
 
-	whereClause, args := buildConditions(baseWhere, groupExpr, search, startTimestamp, endTimestamp)
+	whereClause, args := buildConditions(withSummarySource(baseWhere), groupExpr, search, startTimestamp, endTimestamp)
 
 	// 多取一行用来判断有没有被上限截断：绝大多数情况取不满，
 	// 就不必再跑一次聚合去数总数（那等于把聚合做两遍）
@@ -746,7 +897,7 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 	startTimestamp, endTimestamp int64, peerExpr string, splitChain, splitRule bool,
 	search, sortBy, order string) ([]DetailRow, int, error) {
 
-	whereClause, filterArgs := buildConditions(baseWhere, peerExpr, search, startTimestamp, endTimestamp)
+	whereClause, filterArgs := buildConditions(withSummarySource(baseWhere), peerExpr, search, startTimestamp, endTimestamp)
 	args := append([]interface{}{}, baseArgs...)
 	args = append(args, filterArgs...)
 
@@ -835,7 +986,7 @@ func (d *Database) queryDetailRows(baseWhere string, baseArgs []interface{},
 func (d *Database) queryDetailCount(baseWhere string, baseArgs []interface{},
 	startTimestamp, endTimestamp int64, peerExpr string) (int64, int64, error) {
 
-	whereClause, timeArgs := buildConditions(baseWhere, "", "", startTimestamp, endTimestamp)
+	whereClause, timeArgs := buildConditions(withSummarySource(baseWhere), "", "", startTimestamp, endTimestamp)
 	args := append([]interface{}{}, baseArgs...)
 	args = append(args, timeArgs...)
 
@@ -869,8 +1020,10 @@ func calculateTimeSlotIndex(timestamp int64, dateStart time.Time) int {
 	return slotIndex
 }
 
-// getClashGanttData 从 connections 现算 Clash 代理连接热度（改造前的算法，逐槽保持不变）。
-func (d *Database) getClashGanttData(date string, normalize func(uint16) int) ([]GanttRow, error) {
+// getClashGanttData 从 connections 现算某个 Clash 源的连接热度（逐槽算法不变）。
+// v3.0.0 起严格按 source 隔离：只看该数据源 ID 写入的连接，存量 source=” 的
+// 历史数据不进在线状态页（仅进目标 / 客户端汇总，见 summarySourceCond）。
+func (d *Database) getClashGanttData(source, date string, normalize func(uint16) int) ([]GanttRow, error) {
 	// 计算日期范围的时间戳（使用本地时区）
 	localLoc := time.Now().Location()
 	dateStart, err := time.ParseInLocation("2006-01-02", date, localLoc)
@@ -889,12 +1042,12 @@ func (d *Database) getClashGanttData(date string, normalize func(uint16) int) ([
 			END AS source_ip,
 			start_timestamp, last_seen_timestamp
 		FROM connections
-		WHERE start_timestamp >= ? AND start_timestamp < ?
+		WHERE source = ? AND start_timestamp >= ? AND start_timestamp < ?
 		AND ((source_ip IS NOT NULL AND source_ip != '') OR type = 'Inner')
 		ORDER BY source_ip, start_timestamp
 	`
 
-	rows, err := d.db.Query(query, dateStart.Unix(), dateEnd.Unix())
+	rows, err := d.db.Query(query, source, dateStart.Unix(), dateEnd.Unix())
 	if err != nil {
 		return nil, err
 	}

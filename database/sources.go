@@ -12,7 +12,7 @@ type DataSource struct {
 	ID            string `json:"id"`
 	Type          string `json:"type"` // clash | ipfix
 	Name          string `json:"name"`
-	Enabled       bool   `json:"enabled"`
+	Enabled       bool   `json:"enabled"`        // 采集开关：只控制是否起采集器写库，与能否被选中无关
 	Address       string `json:"address"`        // clash: host:port；ipfix: 监听地址
 	Port          int    `json:"port"`           // ipfix: UDP 端口
 	LANCIDRs      string `json:"lan_cidrs"`      // ipfix: 逗号分隔的 LAN 网段
@@ -21,9 +21,12 @@ type DataSource struct {
 	CredentialRef string `json:"credential_ref"` // 凭据引用（环境变量名），非空时优先
 	// 表内保存的轻量混淆后密钥；json:"-" 保证永不回显，只写字段由 API 层收明文后混淆。
 	CredentialValue string `json:"-"`
-	IsDefault       bool   `json:"is_default"`
+	IsDefault       bool   `json:"is_default"` // 在线默认（单选），只决定在线状态页跟随哪个源
 	SortOrder       int    `json:"sort_order"`
 
+	// InSummary 只控制该 clash 源是否参与目标统计 / 客户端统计（含明细弹窗）。
+	// ipfix 源不写 connections，汇总开关恒为 false（API 层强制、查询层也只认 clash）。
+	InSummary        bool   `json:"in_summary"`
 	Thresholds       string `json:"thresholds"`        // 逗号分隔的 5 个档位分界值，空 = 用默认
 	CustomThresholds bool   `json:"custom_thresholds"` // 是否启用自定义阈值
 }
@@ -40,17 +43,18 @@ func (s DataSource) CredentialSource() string {
 }
 
 const sourceColumns = `id, type, name, enabled, address, port, lan_cidrs, exclude_ips,
-	interval, credential_ref, credential_value, is_default, sort_order, thresholds, custom_thresholds`
+	interval, credential_ref, credential_value, is_default, sort_order, thresholds, custom_thresholds, in_summary`
 
 func scanSource(rows *sql.Rows) (DataSource, error) {
 	var s DataSource
-	var enabled, isDefault, customThresholds int
+	var enabled, isDefault, customThresholds, inSummary int
 	err := rows.Scan(&s.ID, &s.Type, &s.Name, &enabled, &s.Address, &s.Port,
 		&s.LANCIDRs, &s.ExcludeIPs, &s.Interval, &s.CredentialRef, &s.CredentialValue,
-		&isDefault, &s.SortOrder, &s.Thresholds, &customThresholds)
+		&isDefault, &s.SortOrder, &s.Thresholds, &customThresholds, &inSummary)
 	s.Enabled = enabled != 0
 	s.IsDefault = isDefault != 0
 	s.CustomThresholds = customThresholds != 0
+	s.InSummary = inSummary != 0
 	return s, err
 }
 
@@ -76,16 +80,17 @@ func (d *Database) GetSources() ([]DataSource, error) {
 	return collectSources(d.db.Query(`SELECT ` + sourceColumns + ` FROM data_sources ORDER BY sort_order, id`))
 }
 
-// GetEnabledSources 返回启用的数据源，供采集器与前端下拉使用。
+// GetEnabledSources 返回启用的数据源，供采集器使用（enabled 只控制采集落盘）。
 func (d *Database) GetEnabledSources() ([]DataSource, error) {
 	return collectSources(d.db.Query(`SELECT ` + sourceColumns + ` FROM data_sources WHERE enabled = 1 ORDER BY sort_order, id`))
 }
 
-// GetDefaultSource 返回默认数据源 ID。没有显式默认时回落到第一个启用源；
-// 一个都没有（空表）时返回空串，由前端提示「暂无数据源」。不再硬编码 "clash"。
+// GetDefaultSource 返回「在线默认」数据源 ID。显式默认优先，且不受采集开关影响
+// （采集关闭的源仍可被选为在线默认、可看历史数据）；没有显式默认时回落到第一个
+// 启用源；一个都没有（空表）时返回空串。v3.0.0 起不再硬编码 "clash"。
 func (d *Database) GetDefaultSource() (string, error) {
 	var id string
-	err := d.db.QueryRow(`SELECT id FROM data_sources WHERE is_default = 1 AND enabled = 1 LIMIT 1`).Scan(&id)
+	err := d.db.QueryRow(`SELECT id FROM data_sources WHERE is_default = 1 LIMIT 1`).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -97,6 +102,17 @@ func (d *Database) GetDefaultSource() (string, error) {
 		return "", nil
 	}
 	return id, err
+}
+
+// GetSourceType 返回数据源类型（clash / ipfix）；源不存在时返回空串。
+// 供在线状态查询按真实数据源类型路由（clash → connections，ipfix → flow_slots）。
+func (d *Database) GetSourceType(id string) (string, error) {
+	var typ string
+	err := d.db.QueryRow(`SELECT type FROM data_sources WHERE id = ?`, id).Scan(&typ)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return typ, err
 }
 
 // UpsertSource 新增或更新一个数据源。设为默认时先清掉其它源的默认标记。
@@ -112,7 +128,7 @@ func (d *Database) UpsertSource(s DataSource) error {
 			return err
 		}
 	}
-	enabled, isDefault, custom := 0, 0, 0
+	enabled, isDefault, custom, inSummary := 0, 0, 0, 0
 	if s.Enabled {
 		enabled = 1
 	}
@@ -122,17 +138,22 @@ func (d *Database) UpsertSource(s DataSource) error {
 	if s.CustomThresholds {
 		custom = 1
 	}
+	// ipfix 源不写 connections，汇总开关强制为 0（管理页禁用该开关，这里是兜底）。
+	if s.InSummary && s.Type != "ipfix" {
+		inSummary = 1
+	}
 	_, err := d.db.Exec(`INSERT INTO data_sources (`+sourceColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			type = excluded.type, name = excluded.name, enabled = excluded.enabled,
 			address = excluded.address, port = excluded.port, lan_cidrs = excluded.lan_cidrs,
 			exclude_ips = excluded.exclude_ips, interval = excluded.interval,
 			credential_ref = excluded.credential_ref, credential_value = excluded.credential_value,
 			is_default = excluded.is_default, sort_order = excluded.sort_order,
-			thresholds = excluded.thresholds, custom_thresholds = excluded.custom_thresholds`,
+			thresholds = excluded.thresholds, custom_thresholds = excluded.custom_thresholds,
+			in_summary = excluded.in_summary`,
 		s.ID, s.Type, s.Name, enabled, s.Address, s.Port, s.LANCIDRs, s.ExcludeIPs,
-		s.Interval, s.CredentialRef, s.CredentialValue, isDefault, s.SortOrder, s.Thresholds, custom)
+		s.Interval, s.CredentialRef, s.CredentialValue, isDefault, s.SortOrder, s.Thresholds, custom, inSummary)
 	return err
 }
 
@@ -151,56 +172,5 @@ func (d *Database) GetSourceCredentialValue(id string) (string, error) {
 // 所以不禁止删除任何数据源（包括 clash 源）。
 func (d *Database) DeleteSource(id string) error {
 	_, err := d.db.Exec(`DELETE FROM data_sources WHERE id = ?`, id)
-	return err
-}
-
-// migrateSourceColumns 为已存在的 data_sources 表补齐后加的列（自定义阈值、
-// 表内混淆凭据）。CREATE TABLE IF NOT EXISTS 不会改动旧表结构，所以用 PRAGMA
-// 判列后幂等 ALTER。仅当本次真正补了 thresholds 列（从旧版升级）时，把升级前
-// 硬编码的 IPFIX 阈值迁到内置 ipfix 行，保证升级零回退；此后管理页改动不会被覆盖。
-func migrateSourceColumns(db *sql.DB) error {
-	rows, err := db.Query(`PRAGMA table_info(data_sources)`)
-	if err != nil {
-		return err
-	}
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid, notnull, pk int
-		var name, colType string
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &colType, &notnull, &dflt, &pk); err != nil {
-			rows.Close()
-			return err
-		}
-		existing[name] = true
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-
-	addedThresholds := false
-	if !existing["thresholds"] {
-		if _, err := db.Exec(`ALTER TABLE data_sources ADD COLUMN thresholds TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-		addedThresholds = true
-	}
-	if !existing["custom_thresholds"] {
-		if _, err := db.Exec(`ALTER TABLE data_sources ADD COLUMN custom_thresholds INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return err
-		}
-	}
-	if !existing["credential_value"] {
-		if _, err := db.Exec(`ALTER TABLE data_sources ADD COLUMN credential_value TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-	}
-	if !addedThresholds {
-		return nil
-	}
-	_, err = db.Exec(`UPDATE data_sources SET thresholds = '2,50,200,600,900', custom_thresholds = 1
-		WHERE id = 'ipfix' AND thresholds = ''`)
 	return err
 }

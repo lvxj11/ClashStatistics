@@ -7,16 +7,15 @@
          style="width: max-content"></div>
 
     <!-- 第一行：筛选控件。标签统一放在控件上方，避免"标签 + 控件"横排时挤在一起 -->
+    <!-- v3.0.0：取消本页数据源下拉，统一跟随数据源配置页的「在线默认」单选源；
+         这里只静态显示当前跟随的源，切换请到数据源页，避免统计页各自切换导致数据不配套 -->
     <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3">
         <div class="flex flex-col gap-1" x-show="!noSources">
-            <span class="text-xs font-medium opacity-70">数据源</span>
-            <select x-model="source" @change="loadGanttChart()" class="select select-sm w-44"
-                    x-show="sources.length > 1">
-                <template x-for="s in sources" :key="s.id">
-                    <option :value="s.id" x-text="s.name"></option>
-                </template>
-            </select>
-            <span class="text-xs opacity-60" x-show="sources.length <= 1" x-text="sources.length ? sources[0].name : ''"></span>
+            <span class="text-xs font-medium opacity-70">在线默认数据源</span>
+            <div class="flex items-center gap-2 h-8">
+                <span class="text-sm" x-text="defaultName || defaultID || '—'"></span>
+                <a href="/data-sources" class="link text-xs" title="切换在线默认源请到数据源配置页">切换</a>
+            </div>
         </div>
         <div class="flex flex-col gap-1">
             <span class="text-xs font-medium opacity-70">日期</span>
@@ -126,18 +125,18 @@
         </div>
     </div>
 
-    <!-- 没有任何数据源：不发 /api/gantt 请求，直接引导去数据源页 -->
+    <!-- 没有可用的在线默认源：不发 /api/gantt 请求，直接引导去数据源页 -->
     <div x-show="noSources" class="text-center py-10" x-cloak>
         <div class="alert alert-info inline-flex text-left">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info shrink-0 w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
             <div>
-                <p class="font-medium">暂无数据源</p>
+                <p class="font-medium" x-text="hasSources ? '未设置在线默认数据源' : '暂无数据源'"></p>
                 <p class="mt-1 text-xs">
-                    在线状态热度按数据源统计，请先到
+                    在线状态热度跟随数据源页的「在线默认」源。请到
                     <a href="/data-sources" class="link">数据源</a>
-                    页添加 Clash 或 IPFIX 源。
+                    页添加源，并启用「采集」或设为「在线默认」。
                 </p>
             </div>
         </div>
@@ -190,9 +189,11 @@
             rowHeight: 24,
             containerHeight: 600,
             selectedDate: '{{.CurrentDate}}',
-            sources: [],
-            source: '',
-            noSources: false,
+            source: '',        // 当前跟随的「在线默认」源 ID
+            defaultID: '',
+            defaultName: '',
+            hasSources: false, // 是否存在任意数据源
+            noSources: false,  // 没有可用的在线默认源（显示引导、不发 gantt 请求）
             sortBy: 'ip',
             search: '',
             loading: true,
@@ -209,9 +210,9 @@
                 });
             },
 
-            // 先拉取数据源列表与默认源，再按该源加载热度数据。
-            // 空表时显示「暂无数据源」引导，不发 /api/gantt 请求；接口失败显示错误，
-            // 不再静默回落到 Clash 默认视图。
+            // v3.0.0：在线状态页不再自带数据源下拉，统一跟随数据源页的「在线默认」
+            // 单选源。/api/sources 只返回 default / default_name / has_sources；
+            // 没有可用的在线默认源时显示引导、不发 /api/gantt 请求；接口失败显示错误。
             loadSources() {
                 fetch('/api/sources')
                     .then(response => {
@@ -219,9 +220,11 @@
                         return response.json();
                     })
                     .then(data => {
-                        this.sources = data.sources || [];
-                        this.source = data.default || (this.sources[0] ? this.sources[0].id : '');
-                        this.noSources = this.sources.length === 0;
+                        this.hasSources = !!data.has_sources;
+                        this.defaultID = data.default || '';
+                        this.defaultName = data.default_name || '';
+                        this.source = this.defaultID;
+                        this.noSources = this.source === '';
                         if (this.noSources) {
                             this.clearForNoSources();
                         } else {
@@ -229,8 +232,10 @@
                         }
                     })
                     .catch(error => {
-                        this.sources = [];
                         this.source = '';
+                        this.defaultID = '';
+                        this.defaultName = '';
+                        this.hasSources = false;
                         this.noSources = false;
                         this.loading = false;
                         this.error = '加载数据源失败: ' + error.message;

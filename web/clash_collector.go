@@ -70,10 +70,11 @@ func (c *clashCollector) run() {
 
 			c.resolver.ObserveConnections(dbConnections)
 
-			if err := c.db.SaveConnections(dbConnections); err != nil {
+			// 写入打上本数据源 ID，按 (source,id) 隔离落盘
+			if err := c.db.SaveConnections(c.src.ID, dbConnections); err != nil {
 				log.Error("保存连接信息到数据库失败: %v\n", err)
 			} else {
-				log.Info("成功保存 %d 个连接到数据库\n", len(dbConnections))
+				log.Info("数据源 %s 成功保存 %d 个连接\n", c.src.ID, len(dbConnections))
 			}
 		}
 	}

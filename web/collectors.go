@@ -69,55 +69,58 @@ func resolveSecret(src database.DataSource) string {
 }
 
 // clashSource 只从 data_sources 表读取启用的 Clash 源配置，供 /refresh 手动刷新。
-// 运行时配置只认表，不再回落到 config.toml / env；没有启用的 Clash 源时 ok=false。
-func (s *Server) clashSource() (host, secret string, interval int, ok bool) {
+// 返回该源 ID（写入时按源隔离落盘打标）、地址、凭据、间隔；没有启用的 Clash 源时 ok=false。
+// 运行时配置只认表，不再回落到 config.toml / env。
+func (s *Server) clashSource() (id, host, secret string, interval int, ok bool) {
 	sources, err := s.db.GetSources()
 	if err != nil {
-		return "", "", 0, false
+		return "", "", "", 0, false
 	}
 	for _, src := range sources {
 		if src.Type != "clash" || !src.Enabled {
 			continue
 		}
-		return src.Address, resolveSecret(src), src.Interval, true
+		return src.ID, src.Address, resolveSecret(src), src.Interval, true
 	}
-	return "", "", 0, false
+	return "", "", "", 0, false
 }
 
-type sourceOption struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	IsDefault bool   `json:"is_default"`
-}
-
+// dataSourceOptions 是在线状态页取数所需的最小信息：跟随「在线默认」单选源。
+// v3.0.0 取消了页面上的数据源下拉，所以不再返回完整候选列表。
 type dataSourceOptions struct {
-	Sources []sourceOption `json:"sources"`
-	Default string         `json:"default"`
+	Default     string `json:"default"`      // 在线默认源 ID
+	DefaultName string `json:"default_name"` // 默认源显示名（页面静态标签用）
+	HasSources  bool   `json:"has_sources"`  // 是否存在任意数据源
 }
 
-// getSources 返回启用的数据源与默认源，供在线状态页的下拉使用。
-// 空表时返回空列表与空 default，由前端提示「暂无数据源」，不再硬编码 clash。
+// getSources 返回在线默认源与「是否有源」，供在线状态页按该源取数。
+// 所有数据源恒可选、不再按 enabled 过滤：采集关闭的源仍可被设为在线默认、看历史数据。
+// 空表时 has_sources=false，由前端显示「暂无数据源」引导。
 func (s *Server) getSources(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	sources, err := s.db.GetEnabledSources()
+	sources, err := s.db.GetSources()
 	if err != nil {
 		http.Error(w, "读取数据源失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// 在线默认严格取 GetDefaultSource 的结果：显式默认优先，否则回落「第一个
+	// 启用源」。采集关闭且又没显式默认的源不会被硬塞成默认（见规格 point 6 /
+	// detail A）；此时 default 为空，由前端按 has_sources 给出相应引导。
 	defaultID, err := s.db.GetDefaultSource()
 	if err != nil {
 		defaultID = ""
 	}
-
-	out := dataSourceOptions{
-		Sources: make([]sourceOption, 0, len(sources)),
-		Default: defaultID,
-	}
+	defaultName := ""
 	for _, src := range sources {
-		out.Sources = append(out.Sources, sourceOption{
-			ID: src.ID, Name: src.Name, IsDefault: src.IsDefault,
-		})
+		if src.ID == defaultID {
+			defaultName = src.Name
+			break
+		}
 	}
-	json.NewEncoder(w).Encode(out)
+	json.NewEncoder(w).Encode(dataSourceOptions{
+		Default:     defaultID,
+		DefaultName: defaultName,
+		HasSources:  len(sources) > 0,
+	})
 }

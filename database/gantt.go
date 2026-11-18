@@ -49,10 +49,8 @@ func toIntensity(v uint16, thresholds []uint16) int {
 
 // sourceThresholds 返回某数据源生效的阈值。未开启自定义、留空、源不存在或
 // 值损坏时一律回落到 DefaultThresholds，保证任何时候都能出图。
+// v3.0.0 起不再有硬编码 "clash" 源：source 就是 data_sources 里的真实 ID。
 func (d *Database) sourceThresholds(source string) []uint16 {
-	if source == "" {
-		source = "clash"
-	}
 	var custom int
 	var raw string
 	if err := d.db.QueryRow(`SELECT custom_thresholds, thresholds FROM data_sources WHERE id = ?`, source).
@@ -96,12 +94,25 @@ func buildGanttRows(raw map[string]*[288]uint16, normalize func(uint16) int) []G
 }
 
 // GetGanttData 是在线状态页的统一查询出口：各源都返回同一结构的 []GanttRow。
-// 阈值按数据源行读取（可自定义），只解析一次后用闭包复用，避免逐槽查库。
+// v3.0.0 起严格按「在线默认」单选的真实数据源 ID 取数，不再有下拉切换、也不再
+// 硬编码 "clash"：clash 源读 connections WHERE source=该ID，ipfix 源读对应的
+// flow_slots。未知 / 已删除 / 空源一律返回空结果，避免把不同源的数据混在一起。
 func (d *Database) GetGanttData(source, date string) ([]GanttRow, error) {
+	if source == "" {
+		return []GanttRow{}, nil
+	}
+	typ, err := d.GetSourceType(source)
+	if err != nil {
+		return nil, err
+	}
 	thresholds := d.sourceThresholds(source)
 	normalize := func(v uint16) int { return toIntensity(v, thresholds) }
-	if source == "" || source == "clash" {
-		return d.getClashGanttData(date, normalize)
+	switch typ {
+	case "clash":
+		return d.getClashGanttData(source, date, normalize)
+	case "ipfix":
+		return d.getFlowSlotGanttData(source, date, normalize)
+	default:
+		return []GanttRow{}, nil
 	}
-	return d.getFlowSlotGanttData(source, date, normalize)
 }

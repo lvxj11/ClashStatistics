@@ -71,15 +71,28 @@ func withTempDB(t *testing.T) (*Database, string) {
 	return db, time.Now().Format("2006-01-02")
 }
 
-// TestClashGanttUnchanged 校验改造后单 Clash 源仍按 [start,last_seen] 逐槽累加并
+// mustUpsert 建一个真实数据源。v3.0.0 起 GetGanttData 按 data_sources 里的真实
+// 类型 / ID 路由，测试必须先注册源，不能再依赖硬编码 "clash" / "ipfix"。
+func mustUpsert(t *testing.T, db *Database, id, typ string, inSummary bool) {
+	t.Helper()
+	if err := db.UpsertSource(DataSource{
+		ID: id, Type: typ, Name: id, Enabled: true, InSummary: inSummary,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestClashGanttUnchanged 校验 v3.0.0 单 Clash 源仍按 [start,last_seen] 逐槽累加并
 // 输出与旧实现等价的稀疏结构（值变为档位，但槽位置一一对应）。
 func TestClashGanttUnchanged(t *testing.T) {
 	db, date := withTempDB(t)
+	mustUpsert(t, db, "clash", "clash", true)
 	loc := time.Now().Location()
 	dayStart, _ := time.ParseInLocation("2006-01-02", date, loc)
 	start := dayStart.Add(10 * time.Hour).Unix()
 
-	// 直接写表以精确控制区间：SaveConnections 会把 last_seen 强制刷成当前时间
+	// 直接写表以精确控制区间：SaveConnections 会把 last_seen 强制刷成当前时间。
+	// 所有行必须显式打上 source='clash'，在线状态严格按源隔离取数。
 	for _, c := range []struct {
 		id, ip   string
 		from, to int64
@@ -88,8 +101,8 @@ func TestClashGanttUnchanged(t *testing.T) {
 		{"c2", "192.168.1.5", start, start + 600},
 		{"c3", "192.168.1.9", start, start},
 	} {
-		if _, err := db.db.Exec(`INSERT INTO connections (id, source_ip, start_timestamp, last_seen_timestamp)
-			VALUES (?, ?, ?, ?)`, c.id, c.ip, c.from, c.to); err != nil {
+		if _, err := db.db.Exec(`INSERT INTO connections (source, id, source_ip, start_timestamp, last_seen_timestamp)
+			VALUES ('clash', ?, ?, ?, ?)`, c.id, c.ip, c.from, c.to); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -128,11 +141,57 @@ func TestClashGanttUnchanged(t *testing.T) {
 	}
 }
 
+// TestClashGanttSourceIsolation 校验 v3.0.0 在线状态按 clash 源 ID 严格隔离：
+// 不同 clash 源写入 connections 的数据互不串台，存量 source=” 也不出现在在线状态。
+func TestClashGanttSourceIsolation(t *testing.T) {
+	db, date := withTempDB(t)
+	mustUpsert(t, db, "a", "clash", true)
+	mustUpsert(t, db, "b", "clash", true)
+	loc := time.Now().Location()
+	dayStart, _ := time.ParseInLocation("2006-01-02", date, loc)
+	start := dayStart.Add(10 * time.Hour).Unix()
+
+	insert := func(source, id, ip string) {
+		if _, err := db.db.Exec(`INSERT INTO connections (source, id, source_ip, start_timestamp, last_seen_timestamp)
+			VALUES (?, ?, ?, ?, ?)`, source, id, ip, start, start); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("a", "1", "192.168.1.5")
+	insert("b", "2", "192.168.1.9")
+	insert("", "3", "192.168.1.100") // 升级前遗留，在线状态看不到
+
+	rowsA, err := db.GetGanttData("a", date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsA) != 1 || rowsA[0].SourceIP != "192.168.1.5" {
+		t.Fatalf("源 a 只应看到自己的连接: %#v", rowsA)
+	}
+	rowsB, err := db.GetGanttData("b", date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsB) != 1 || rowsB[0].SourceIP != "192.168.1.9" {
+		t.Fatalf("源 b 只应看到自己的连接: %#v", rowsB)
+	}
+	// 未知 / 空源返回空，绝不回落到全表混合
+	rowsUnknown, err := db.GetGanttData("nope", date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsUnknown) != 0 {
+		t.Fatalf("未知源应返回空: %#v", rowsUnknown)
+	}
+}
+
 // TestFlowSlotsDedup 校验 B 方案的核心语义：相同五元组的多个流分片（同一长连接被
 // active-flow-timeout 切片或重复上报）在同一 5 分钟槽只算 1 条并发连接；不同五元组
 // 才算多条。查询出的 RawValues 即真实并发连接数，与切片长度无关。
 func TestFlowSlotsDedup(t *testing.T) {
 	db, date := withTempDB(t)
+	mustUpsert(t, db, "ipfix", "ipfix", false)
+	mustUpsert(t, db, "clash", "clash", true)
 	loc := time.Now().Location()
 	dayStart, _ := time.ParseInLocation("2006-01-02", date, loc)
 	start := dayStart.Add(10 * time.Hour).Unix()
@@ -188,7 +247,7 @@ func TestFlowSlotsDedup(t *testing.T) {
 		}
 	}
 
-	// Clash 源不应看到 ipfix 的数据，两个源严格隔离
+	// Clash 源走 connections、IPFIX 走 flow_slots，两个源严格隔离
 	clashRows, err := db.GetGanttData("clash", date)
 	if err != nil {
 		t.Fatal(err)
@@ -217,6 +276,9 @@ func TestCustomThresholdsPerSource(t *testing.T) {
 	if err := db.SaveFlows("ipfix", flows); err != nil {
 		t.Fatal(err)
 	}
+
+	// 注册 ipfix 源（GetGanttData 需按真实类型路由）
+	mustUpsert(t, db, "ipfix", "ipfix", false)
 
 	// 未开启自定义：默认阈值 {2,20,50,150,254} 下 21 → 3 档
 	rows, err := db.GetGanttData("ipfix", date)
@@ -249,6 +311,58 @@ func TestCustomThresholdsPerSource(t *testing.T) {
 		t.Fatalf("ipfix 源应读到自定义阈值, got %v", got)
 	}
 	if got := db.sourceThresholds("clash"); len(got) != 5 || got[0] != 2 {
-		t.Fatalf("clash 源不应受 ipfix 影响，仍用默认阈值, got %v", got)
+		t.Fatalf("未注册的 clash 源回落到默认阈值, got %v", got)
+	}
+}
+
+// TestSummarySourceFilter 校验 v3.0.0 目标 / 客户端统计（含明细弹窗）的来源过滤：
+// 只纳入「升级前遗留 source=”」与「勾选汇总的 clash 源」，ipfix / 未勾选的 clash
+// 源都不进统计；且明细弹窗与主统计口径一致。
+func TestSummarySourceFilter(t *testing.T) {
+	db, _ := withTempDB(t)
+	mustUpsert(t, db, "a", "clash", true)   // 纳入汇总
+	mustUpsert(t, db, "b", "clash", false)  // 不纳入汇总
+	mustUpsert(t, db, "ip", "ipfix", false) // ipfix 恒不进统计
+
+	insert := func(source, id, host string) {
+		if _, err := db.db.Exec(`INSERT INTO connections
+			(source, id, host, source_ip, download, upload, start_timestamp, last_seen_timestamp)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, source, id, host, "10.0.0."+id, 100, 100, 1, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("a", "1", "a.example")
+	insert("b", "2", "b.example")
+	insert("", "3", "legacy.example")
+	insert("ip", "4", "ipfix.example")
+
+	// 目标统计：只剩 a.example + legacy.example 两组
+	stats, err := db.GetTargetStats(0, 0, "", "total", "desc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 2 {
+		t.Fatalf("汇总应只含 a + 存量两组, got %d: %#v", stats.Total, stats.Rows)
+	}
+	for _, r := range stats.Rows {
+		if r.Target == "b.example" || r.Target == "ipfix.example" {
+			t.Fatalf("不应出现未纳入汇总的源数据: %#v", stats.Rows)
+		}
+	}
+
+	// 明细弹窗与主统计同口径：纳入的目标有明细，未纳入的目标查不到明细
+	detailOK, err := db.GetTargetDetail("a.example", 0, 0, false, false, "", "total", "desc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detailOK.Rows) != 1 {
+		t.Fatalf("a.example 应有 1 行明细, got %#v", detailOK.Rows)
+	}
+	detailNo, err := db.GetTargetDetail("b.example", 0, 0, false, false, "", "total", "desc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detailNo.Rows) != 0 {
+		t.Fatalf("b.example 未纳入汇总，明细应为空: %#v", detailNo.Rows)
 	}
 }

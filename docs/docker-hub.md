@@ -106,14 +106,14 @@ docker stop clash-statistics && docker rm clash-statistics
 # 用与原来相同的 -v 挂载重新 docker run
 ```
 
-数据库会自动建表 / 迁移，升级不需要手动处理数据；只要 `/app/data` 挂载不变，历史统计与已配置的数据源就都在。也可以固定版本标签，例如 `lvxj11/clash-statistics:2.2.0`。
+数据库会自动迁移，升级不需要手动处理数据；只要 `/app/data` 挂载不变，历史统计与已配置的数据源就都在。也可以固定版本标签，例如 `lvxj11/clash-statistics:3.0.0`。
 
-> **迁移基线为 v1.0.4**：升级新增 `activity`、`flow_slots`、`data_sources` 三张表，`connections` / `client_names` 结构不变、无数据迁移（`activity` 为已停写停查的旧聚合表，仅按保留天数清理残留；在线状态推送源改用 `flow_slots` 后从升级时刻重新积累热度）。后加的列（`thresholds` / `custom_thresholds` / `credential_value`）用幂等 `ALTER TABLE` 补齐。v1.0.3 及更早版本的历史迁移代码已移除，请先用 v1.0.4 过渡再升级。
+> **迁移基线为 v2.2.0**：v3.0.0 按数据源隔离落盘 —— 给 `data_sources` 补 `in_summary`（汇总开关），把 `connections` 重建为 `(source, id)` 复合主键并复制存量数据（存量行 `source=''` 默认纳入目标 / 客户端汇总）。在线状态页改为严格按「在线默认」源隔离取数，升级后在线状态历史热度会消失一段时间、等新数据积累；目标 / 客户端统计不受影响。**低于 v2.2.0 的库不再支持自动迁移**，请先用 v2.2.0 过渡再升级。
 
 ## 标签
 
 - `latest` —— 最新发布版本
-- `2.2.0`、`2.1.0`、`2.0.0`、`1.0.4` … —— 与 GitHub Release 对应的语义化版本
+- `3.0.0`、`2.2.0`、`2.1.0`、`2.0.0` … —— 与 GitHub Release 对应的语义化版本
 
 ## 更多文档
 
